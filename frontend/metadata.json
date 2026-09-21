@@ -1,0 +1,5 @@
+{
+  "name": "LeetCode Mastery Tracker",
+  "description": "A full-stack spaced repetition tracker for LeetCode problems, helping you master algorithms through scheduled reviews.",
+  "requestFramePermissions": []
+}

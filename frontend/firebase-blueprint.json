@@ -1,0 +1,28 @@
+{
+  "entities": {
+    "Question": {
+      "title": "LeetCode Question",
+      "description": "A LeetCode problem being tracked for mastery.",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "description": "The UID of the user who owns this question." },
+        "title": { "type": "string", "description": "The title of the LeetCode question." },
+        "url": { "type": "string", "description": "The URL of the LeetCode question." },
+        "difficulty": { "type": "string", "enum": ["Easy", "Medium", "Hard"], "description": "The LeetCode difficulty level." },
+        "userRating": { "type": "string", "enum": ["Easy", "Medium", "Hard"], "description": "How the user felt about the problem." },
+        "notes": { "type": "string", "description": "Markdown notes about the approach, complexity, etc." },
+        "createdAt": { "type": "string", "format": "date-time", "description": "When the question was first logged." },
+        "nextReviewAt": { "type": "string", "format": "date-time", "description": "When the next review is scheduled." },
+        "reviewCount": { "type": "number", "description": "Number of reviews completed (0 to 3)." },
+        "isCompleted": { "type": "boolean", "description": "Whether all 3 reviews are finished." }
+      },
+      "required": ["userId", "title", "url", "difficulty", "userRating", "notes", "createdAt", "nextReviewAt", "reviewCount", "isCompleted"]
+    }
+  },
+  "firestore": {
+    "/questions/{questionId}": {
+      "schema": "Question",
+      "description": "Collection of LeetCode questions tracked by users."
+    }
+  }
+}
