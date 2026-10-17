@@ -1,0 +1,7 @@
+{
+  "name": "Leet Tracker",
+  "description": "Single-user spaced-repetition tracker for solved coding problems with LeetCode synchronization and interval reviews.",
+  "icon": "/logo.svg",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
