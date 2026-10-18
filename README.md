@@ -140,3 +140,178 @@ The central error middleware maps domain `AppError` subclasses to standard HTTP 
 | **App Logo** | Custom vector SVG logo with 3 rising gradient bars, diagonal checkmark trajectory, and top-right green arrow. Displayed at 36px in Navbar and configured as favicon. | `public/logo.svg`<br>`src/frontend/components/Navbar.tsx`<br>`index.html`<br>`metadata.json` | `src/frontend/__tests__/frontend.test.tsx` (Navbar renders img with alt and src, public/logo.svg exists and non-empty, index.html contains icon link) | **Met** |
 | **Backup Export & Import** | Full export (`leet-tracker-backup-YYYY-MM-DD.json`) and import via Settings modal or API. Version 1 Zod validation, atomic transaction replacement, rollback on error. | `src/services/backupService.ts`<br>`src/api/routes.ts`<br>`src/frontend/components/SettingsModal.tsx`<br>`src/frontend/apiClient.ts` | `src/services/__tests__/backup.test.ts`<br>`src/api/__tests__/api.test.ts` | **Met** |
 | **Timezone Handling** | Browser client detects IANA zone and sends `X-Timezone` header. Validated server-side; all calendar day math respects client local day boundaries. | `src/domain/clock.ts`<br>`src/domain/dateMath.ts`<br>`src/frontend/hooks/useProblems.ts`<br>`src/api/routes.ts` | `src/domain/__tests__/domain.test.ts`<br>`src/api/__tests__/api.test.ts` | **Met** |
+<p align="center">
+  <img src="public/logo.svg" alt="Leet Tracker logo" width="96">
+</p>
+
+<h1 align="center">Leet Tracker</h1>
+
+<p align="center">
+  A self-hosted spaced-repetition tracker for solved LeetCode problems.<br>
+  Sync what you solved, write notes, then review each problem on day 1, day 3 and day 7 until it sticks.
+</p>
+
+<p align="center">
+  <img alt="Node" src="https://img.shields.io/badge/node-%3E%3D22.13-339933?logo=nodedotjs&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black">
+</p>
+
+<!--
+  Add 2-3 screenshots here (Inbox, Today's Reviews, Notes) before publishing:
+  <p align="center"><img src="docs/inbox.png" width="800" alt="Inbox grouped by solved date"></p>
+-->
+
+## Features
+
+- **LeetCode sync**: enter your username and pull your recent accepted submissions into an Inbox, grouped by the day you solved them (Solved today, Yesterday, then dated groups).
+- **Manual add**: paste a problem URL or slug. It works even when LeetCode is unreachable.
+- **Spaced repetition**: once you save notes, a problem is enrolled and gets three review dates: +1, +3 and +7 days. Enrolled on Oct 1, reviews are due Oct 2, Oct 4 and Oct 8.
+- **Review queue**: check off each stage. Overdue reviews stay completable and never shift later dates. Stages must be completed in order, and the last completed stage can be undone.
+- **Multi-approach notes**: one note per problem, with a tab for each approach (add, rename, delete). Every approach starts from a template: *Your approach, Actual approach, Mistakes, Time Complexity, Space Complexity*. In view mode the two complexity labels render in bold at 32px.
+- **Lifecycle**: Inbox, then Active, then Fully Solved after the third review. Deleting is a soft delete with restore, and a sync never brings a deleted problem back.
+- **Backup and restore**: export everything to a JSON file and import it back atomically.
+
+## How it works
+
+1. **Sync** from LeetCode (or add a problem manually). New problems land in the **Inbox**.
+2. **Write notes.** Approach 1 needs both a Time Complexity and a Space Complexity value. Saving enrolls the problem and creates its three reviews.
+3. **Review** on days +1, +3 and +7 from the **Today's Reviews** tab.
+4. After the third review the problem moves to **Fully Solved**.
+
+## Quick start
+
+Requires **Node.js 22.13 or newer** (it uses the built-in `node:sqlite`).
+
+```bash
+git clone https://github.com/Lokesh-0209/leet-tracker.git
+cd leet-tracker
+npm install
+npm run dev
+```
+
+Open <http://localhost:3000>, go to **Settings**, enter your LeetCode username, then click **Sync from LeetCode**.
+
+Node prints an `ExperimentalWarning: SQLite is an experimental feature` at startup. This is expected.
+
+### Configuration
+
+No configuration is required. One optional environment variable is read from the process environment:
+
+| Variable | Default | Purpose |
+| :--- | :--- | :--- |
+| `DATABASE_PATH` | `./data/leet-tracker.db` | Location of the SQLite file |
+
+```bash
+# macOS / Linux
+DATABASE_PATH=./data/my.db npm run dev
+```
+
+```powershell
+# Windows PowerShell
+$env:DATABASE_PATH="./data/my.db"; npm run dev
+```
+
+## Your data and backups
+
+All data lives in a single SQLite file (by default `./data/leet-tracker.db`, which is git-ignored). Keep that folder, and it survives restarts.
+
+On hosts with an **ephemeral disk** (some cloud previews and serverless platforms), the file is wiped on rebuild or restart. Use a persistent volume, or back up regularly:
+
+- **Export**: Settings, then **Export Backup**, downloads `leet-tracker-backup-YYYY-MM-DD.json`. It includes all problems, notes with every approach, reviews, soft-deleted problems and your username.
+- **Import**: Settings, then **Import Backup**. After confirmation, the file is validated against the version 1 schema and **replaces** all data in one transaction. An invalid file changes nothing.
+
+## Scripts
+
+| Command | What it does |
+| :--- | :--- |
+| `npm run dev` | Express API and Vite dev middleware on port 3000 |
+| `npm run build` | Builds the client with Vite and bundles the server to `dist/server.mjs` with esbuild |
+| `npm test` | Runs the Vitest suite |
+| `npm run lint` | Type-checks the whole project (`tsc --noEmit`, strict mode) |
+
+## Tech stack
+
+React 19, Vite, Tailwind CSS 4, TypeScript (strict), Express, `node:sqlite`, Zod, Vitest, Testing Library, esbuild.
+
+## Architecture
+
+Layered, with dependencies pointing inward. The domain layer imports nothing from the layers around it.
+
+```
+src/
+  domain/        Pure rules: scheduler, state machine, date math, inbox grouping, Zod schemas, typed errors, Clock
+  db/            node:sqlite adapter (behind a port) and schema / migrations
+  repositories/  Persistence interfaces and the SQLite implementation
+  services/      Use cases: sync, manual add, notes and reviews, backup; LeetCode source adapter
+  api/           Express app, routes, error and timezone middleware
+  frontend/      React UI: components, hooks, typed API client
+server.ts        Entry point
+src/serverApp.ts Composition root (wires everything together)
+```
+
+Design decisions worth knowing:
+
+- **Pure scheduling.** Due dates are calendar-day strings (`YYYY-MM-DD`) computed with calendar arithmetic, not 24-hour offsets, so month ends, leap years and DST changes are correct. "Today" comes from an injectable `Clock`.
+- **Time zones.** The browser sends its IANA zone in an `X-Timezone` header. The server validates it and uses it for "today", overdue checks, enrollment dates and Inbox grouping.
+- **Pluggable sources.** LeetCode access sits behind a `ProblemSource` interface, and all LeetCode queries and response schemas live in one file. Adding another platform means adding an adapter.
+- **Atomic writes.** Enrollment, sync and backup restore each run in a single transaction, so a failure leaves nothing half-written.
+- **Typed errors.** Every error reaches the client as `{ code, message, retryable }`.
+
+## API
+
+All routes are under `/api`. Errors use the contract `{ code, message, retryable, details? }`.
+
+| Method | Path | Purpose |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Health check |
+| `GET` | `/problems` | List problems (`status`, `difficulty`, `q` filters) |
+| `GET` | `/problems/deleted` | List soft-deleted problems |
+| `GET` | `/problems/:id` | One problem with its note and reviews |
+| `POST` | `/problems/manual` | Add by URL or slug (restores a soft-deleted match) |
+| `POST` | `/problems/sync` | Sync recent accepted submissions |
+| `POST` | `/problems/:id/note` | Save notes (enrolls an Inbox problem when the gate passes) |
+| `POST` | `/problems/:id/reviews/:stage/complete` | Complete review stage 1, 2 or 3 |
+| `POST` | `/problems/:id/reviews/:stage/undo` | Undo the latest completed stage |
+| `DELETE` | `/problems/:id` | Soft delete |
+| `POST` | `/problems/:id/restore` | Restore a soft-deleted problem |
+| `DELETE` | `/problems/:id/permanent` | Permanently delete, including notes and reviews |
+| `GET` | `/reviews/today` | Due and overdue reviews for the client's day |
+| `GET` / `PUT` | `/settings/username` | Read or set the LeetCode username |
+| `GET` | `/backup` | Export a version 1 backup |
+| `POST` | `/backup/restore` | Replace all data from a backup |
+
+| Error code | HTTP | Retryable | Meaning |
+| :--- | :--- | :--- | :--- |
+| `VALIDATION_ERROR` | 400 | no | Bad input, non-LeetCode URL, duplicate add, failed notes gate, invalid backup |
+| `NOT_FOUND` | 404 | no | Unknown problem or resource |
+| `ILLEGAL_TRANSITION` | 409 | no | Out-of-order review, invalid undo |
+| `INVALID_USERNAME` | 422 | no | LeetCode user not found |
+| `PRIVATE_OR_EMPTY_PROFILE` | 422 | no | Private profile or no accepted submissions |
+| `RATE_LIMITED` | 429 | yes | LeetCode rate limit |
+| `NETWORK_ERROR` | 502 | yes | Timeout or network failure |
+| `UPSTREAM_SCHEMA_CHANGED` | 502 | no | LeetCode response shape changed |
+| `INTERNAL_SERVER_ERROR` | 500 | no | Unexpected error (no stack trace is sent to the client) |
+
+## Testing
+
+```bash
+npm test
+```
+
+The suite covers the following layers: date math and the state machine (month and year ends, leap days, DST, out-of-order and early reviews, undo), the notes gate, repository constraints and transaction rollback, sync error mapping with a fake source, backup round-trips, every API error status, the notes and Inbox UI, and one end-to-end lifecycle test from manual add to Fully Solved, undo, delete and restore. No test touches the real LeetCode API.
+
+## Known limitations
+
+- **Recent window only.** LeetCode's public query returns only your most recent accepted submissions (about 20), so older problems must be added manually.
+- **Unofficial endpoint.** LeetCode has no public API. Sync uses its public GraphQL endpoint, which can change or be rate-limited without notice. Failures are reported as typed errors with a Retry button, and manual add keeps working.
+- **No authentication.** This is a single-user app for local use. The server listens on all network interfaces, so don't expose it to an untrusted network.
+- **SQLite on ephemeral disks.** See [Your data and backups](#your-data-and-backups).
+
+## Roadmap
+
+- Additional problem sources: Codeforces and GeeksforGeeks (the `ProblemSource` interface is designed for this).
+
+## Disclaimer
+
+Leet Tracker is an independent project and is not affiliated with or endorsed by LeetCode. It reads only public profile data.
