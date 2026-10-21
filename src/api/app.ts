@@ -7,6 +7,7 @@ import express from 'express';
 import { createApiRouter, type ApiDependencies } from './routes.js';
 import { timezoneMiddleware } from './timezoneMiddleware.js';
 import { errorHandler } from './errorMiddleware.js';
+import { csrfMiddleware } from './csrfMiddleware.js';
 
 export function createApiApp(deps: ApiDependencies): express.Application {
   const app = express();
@@ -19,6 +20,9 @@ export function createApiApp(deps: ApiDependencies): express.Application {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     next();
   });
+
+  // CSRF protection middleware for mutating requests
+  app.use(csrfMiddleware);
 
   // Timezone resolution middleware
   app.use(timezoneMiddleware);

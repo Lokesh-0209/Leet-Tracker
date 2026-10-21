@@ -54,8 +54,14 @@ class NodeSqliteAdapter implements SqliteDatabasePort {
 
     if (!this.isMemory) {
       const dir = path.dirname(dbPath);
-      if (!fs.existsSync(dir)) {
-        fs.mkdirSync(dir, { recursive: true });
+      try {
+        if (!fs.existsSync(dir)) {
+          fs.mkdirSync(dir, { recursive: true });
+        }
+        fs.accessSync(dir, fs.constants.W_OK | fs.constants.R_OK);
+      } catch (err: unknown) {
+        const message = err instanceof Error ? err.message : String(err);
+        throw new Error(`Failed to initialize database directory at "${dir}": ${message}`);
       }
     }
 
