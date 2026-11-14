@@ -7,6 +7,36 @@ import type { Platform, Difficulty, ProblemStatus, ReviewStage } from './constan
 
 export type { Platform, Difficulty, ProblemStatus, ReviewStage };
 
+export interface User {
+  readonly id: string;
+  readonly leetcodeUsername: string;
+  readonly createdAt: string;
+}
+
+export interface UserRecord extends User {
+  readonly passwordHash: string;
+  readonly passwordSalt: string;
+}
+
+export interface Session {
+  readonly tokenHash: string;
+  readonly userId: string;
+  readonly expiresAt: string;
+  readonly createdAt: string;
+}
+
+export interface VerificationChallenge {
+  readonly id: string;
+  readonly leetcodeUsername: string;
+  readonly codeHash: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
+  readonly expiresAt: string;
+  readonly verifiedAt: string | null;
+  readonly consumedAt: string | null;
+  readonly createdAt: string;
+}
+
 export interface Approach {
   readonly id: string;
   readonly title: string;
@@ -28,6 +58,7 @@ export interface Review {
 
 export interface Problem {
   readonly id: string;
+  readonly userId?: string | null;
   readonly platform: Platform;
   readonly slug: string;
   readonly title: string;

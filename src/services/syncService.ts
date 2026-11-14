@@ -28,29 +28,30 @@ export class SyncService {
   ) {}
 
   /**
-   * Synchronizes solved problems from the user's LeetCode profile.
+   * Synchronizes solved problems from the verified LeetCode profile of the authenticated user.
    * Runs in ONE single DB transaction.
+   * - Does NOT trust frontend-supplied username: always fetches username from server DB settings for userId.
    * - Does not overwrite notes, status, or review state of existing problems.
    * - Never resurrects soft-deleted problems (skips them and counts under skippedDeleted).
    * - Deduplicates identical problems within the fetch batch.
    */
-  public async sync(usernameOverride?: string): Promise<SyncResult> {
-    const username =
-      usernameOverride?.trim() || (await this.settingsRepo.getLeetCodeUsername());
+  public async sync(userId?: string): Promise<SyncResult> {
+    if (!userId || typeof userId !== 'string' || !userId.trim()) {
+      throw new ValidationError('User ID is required for synchronization.');
+    }
+    const validUserId = userId.trim();
+
+    // Always obtain username from the authenticated user settings stored in database
+    const username = await this.settingsRepo.getLeetCodeUsername(validUserId);
 
     if (!username) {
       throw new ValidationError(
-        'No LeetCode username configured. Please enter your username in Settings or provide it to sync.'
+        'No verified LeetCode username found for this account. Please verify your profile first.'
       );
     }
 
     // Fetch solved problems from upstream
     const solvedProblems = await this.problemSource.fetchSolved(username);
-
-    // Save username in settings if provided
-    if (usernameOverride) {
-      await this.settingsRepo.setLeetCodeUsername(usernameOverride.trim());
-    }
 
     // Run the entire upsert inside ONE database transaction
     return this.repository.runInTransaction(async () => {
@@ -68,8 +69,12 @@ export class SyncService {
         }
         processedSlugsInBatch.add(item.slug);
 
-        // Check if problem already exists in database (INCLUDING soft-deleted)
-        const existing = await this.repository.findByPlatformAndSlug(item.platform, item.slug);
+        // Check if problem already exists in database for this user (INCLUDING soft-deleted)
+        const existing = await this.repository.findByPlatformAndSlug(
+          item.platform,
+          item.slug,
+          validUserId
+        );
 
         if (existing) {
           if (existing.deletedAt !== null) {
@@ -82,9 +87,10 @@ export class SyncService {
           continue;
         }
 
-        // New problem: insert into INBOX
+        // New problem: insert into INBOX owned strictly by validUserId
         const newProblem: Problem = {
           id: randomUUID(),
+          userId: validUserId,
           platform: item.platform || PLATFORMS.LEETCODE,
           slug: item.slug,
           title: item.title,

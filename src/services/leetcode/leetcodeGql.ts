@@ -45,6 +45,17 @@ query questionDifficulty($titleSlug: String!) {
 }
 `;
 
+export const USER_PROFILE_QUERY = `
+query getUserProfile($username: String!) {
+  matchedUser(username: $username) {
+    username
+    profile {
+      aboutMe
+    }
+  }
+}
+`;
+
 /* -------------------------------------------------------------------------- */
 /* UPSTREAM ZOD RESPONSE SCHEMAS                                              */
 /* -------------------------------------------------------------------------- */
@@ -93,6 +104,33 @@ export const QuestionDetailsResponseSchema = z.object({
         .nullable(),
     })
     .nullable(),
+  errors: z
+    .array(
+      z.object({
+        message: z.string(),
+      })
+    )
+    .optional(),
+});
+
+export const UserProfileResponseSchema = z.object({
+  data: z
+    .object({
+      matchedUser: z
+        .object({
+          username: z.string(),
+          profile: z
+            .object({
+              aboutMe: z.string().nullable().optional(),
+            })
+            .nullable()
+            .optional(),
+        })
+        .nullable()
+        .optional(),
+    })
+    .nullable()
+    .optional(),
   errors: z
     .array(
       z.object({
@@ -162,7 +200,12 @@ export async function fetchLeetCodeSubmissionsGql(
   }
 
   // If matchedUser is null or missing, user does not exist
-  if (!data || data.matchedUser === null) {
+  if (!data || !data.matchedUser) {
+    throw new InvalidUsernameError(username);
+  }
+
+  // Ensure returned username matches requested account
+  if (data.matchedUser.username.trim().toLowerCase() !== username.trim().toLowerCase()) {
     throw new InvalidUsernameError(username);
   }
 
@@ -223,4 +266,87 @@ export async function fetchLeetCodeQuestionGql(
     title: question.title,
     difficulty: question.difficulty as Difficulty,
   };
+}
+
+export async function fetchLeetCodeProfileGql(
+  client: HttpClient,
+  username: string,
+  endpoint = LEETCODE_GRAPHQL_ENDPOINT
+): Promise<{ username: string; aboutMe: string }> {
+  let response: HttpResponse<unknown>;
+
+  try {
+    response = await client.post(
+      endpoint,
+      {
+        query: USER_PROFILE_QUERY,
+        variables: { username },
+      },
+      {
+        headers: {
+          Referer: `https://leetcode.com/${encodeURIComponent(username)}/`,
+        },
+      }
+    );
+  } catch (err: unknown) {
+    if (err instanceof RateLimitedError || err instanceof NetworkError) {
+      throw err;
+    }
+    throw new NetworkError(
+      `Failed to reach LeetCode GraphQL endpoint: ${err instanceof Error ? err.message : String(err)}`,
+      err
+    );
+  }
+
+  if (response.status === 429) {
+    throw new RateLimitedError('LeetCode rate limit exceeded. Please wait a moment and retry.');
+  }
+
+  if (response.status >= 500) {
+    throw new NetworkError(`LeetCode server returned HTTP ${response.status}.`, {
+      status: response.status,
+    });
+  }
+
+  const parseResult = UserProfileResponseSchema.safeParse(response.data);
+  if (!parseResult.success) {
+    throw new UpstreamSchemaChangedError(
+      'LeetCode GraphQL user profile response schema changed or is malformed.',
+      parseResult.error.format()
+    );
+  }
+
+  const { data, errors } = parseResult.data;
+
+  if (errors && errors.length > 0) {
+    const errorMsg = errors.map((e) => e.message).join('; ');
+    if (/user does not exist|not found|invalid user/i.test(errorMsg)) {
+      throw new InvalidUsernameError(username);
+    }
+  }
+
+  if (!data || data.matchedUser === null || data.matchedUser === undefined) {
+    throw new InvalidUsernameError(username);
+  }
+
+  // Ensure returned username matches requested account (case-insensitive)
+  if (data.matchedUser.username.trim().toLowerCase() !== username.trim().toLowerCase()) {
+    throw new InvalidUsernameError(username);
+  }
+
+  return {
+    username: data.matchedUser.username,
+    aboutMe: data.matchedUser.profile?.aboutMe || '',
+  };
+}
+
+/**
+ * Checks whether the target code appears as a standalone token within aboutMe.
+ * e.g., "123456", "Code: 123456.", "123456 - verification" all match,
+ * while "1234567" or "abc123456" do NOT match.
+ */
+export function matchesVerificationCode(aboutMe: string, code: string): boolean {
+  if (!aboutMe || !code) return false;
+  const regex = new RegExp(`\\b${code}\\b`);
+  return regex.test(aboutMe);
 }

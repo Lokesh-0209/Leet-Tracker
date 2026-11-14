@@ -99,12 +99,23 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
   let fakeSource: FakeProblemSource;
   let syncService: SyncService;
   let problemService: ProblemService;
+  const defaultUserId = '11111111-2222-3333-4444-555555555555';
 
   beforeEach(() => {
     db = createSqliteDatabase(':memory:');
     runMigrations(db);
+    db.prepare(
+      'INSERT INTO users (id, leetcode_username, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(
+      defaultUserId,
+      'testuser',
+      'hashed_pwd_placeholder',
+      'salt_placeholder',
+      '2026-10-16T10:00:00Z'
+    );
     repo = new SqliteProblemRepository(db);
     settingsRepo = new SqliteSettingsRepository(db);
+    settingsRepo.setLeetCodeUsername('testuser', defaultUserId);
     clock = new FrozenClock('2026-10-16T10:00:00Z', 'UTC');
     fakeSource = new FakeProblemSource();
     syncService = new SyncService(repo, fakeSource, settingsRepo);
@@ -249,6 +260,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       // 1. Problem exists and was soft-deleted
       await repo.create({
         id: 'del-resurrect-id',
+        userId: defaultUserId,
         platform: 'LEETCODE',
         slug: 'two-sum',
         title: 'Two Sum',
@@ -273,7 +285,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       ];
 
       // 3. Run sync
-      const result = await syncService.sync('testuser');
+      const result = await syncService.sync(defaultUserId);
 
       expect(result).toEqual({
         added: 0,
@@ -282,13 +294,14 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       });
 
       // 4. Confirm problem is STILL soft-deleted
-      const stored = await repo.findByPlatformAndSlug('LEETCODE', 'two-sum');
+      const stored = await repo.findByPlatformAndSlug('LEETCODE', 'two-sum', defaultUserId);
       expect(stored?.deletedAt).toBe('2026-10-15T12:00:00Z');
     });
 
     it('Given existing problems in DB, When sync runs with 0 new problems, Then counts reflect 0 added and N alreadyKnown', async () => {
       await repo.create({
         id: 'p-1',
+        userId: defaultUserId,
         platform: 'LEETCODE',
         slug: 'merge-intervals',
         title: 'Merge Intervals',
@@ -311,7 +324,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
         },
       ];
 
-      const res = await syncService.sync('testuser');
+      const res = await syncService.sync(defaultUserId);
       expect(res).toEqual({
         added: 0,
         alreadyKnown: 1,
@@ -319,7 +332,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       });
 
       // Existing status and enrolledAt are completely preserved
-      const stored = await repo.findById('p-1');
+      const stored = await repo.findById('p-1', defaultUserId);
       expect(stored?.status).toBe(PROBLEM_STATUSES.ACTIVE);
       expect(stored?.enrolledAt).toBe('2026-10-15T00:00:00Z');
     });
@@ -355,11 +368,11 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
         return originalCreate(p);
       };
 
-      await expect(syncService.sync('testuser')).rejects.toThrow('Database disk error mid-sync');
+      await expect(syncService.sync(defaultUserId)).rejects.toThrow('Database disk error mid-sync');
 
       // Verify transaction rollback: problem-1 was NOT saved!
       repo.create = originalCreate;
-      const allProblems = await repo.list();
+      const allProblems = await repo.list({ userId: defaultUserId });
       expect(allProblems).toHaveLength(0);
     });
   });
@@ -371,6 +384,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
     it('Given a soft-deleted problem, When manually adding the same slug, Then it restores the problem', async () => {
       await repo.create({
         id: 'del-manual-id',
+        userId: defaultUserId,
         platform: 'LEETCODE',
         slug: 'lru-cache',
         title: 'LRU Cache',
@@ -382,20 +396,24 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
         deletedAt: '2026-10-15T12:00:00Z',
       });
 
-      const restored = await problemService.manualAdd({
-        urlOrSlug: 'https://leetcode.com/problems/lru-cache/',
-      });
+      const restored = await problemService.manualAdd(
+        {
+          urlOrSlug: 'https://leetcode.com/problems/lru-cache/',
+        },
+        defaultUserId
+      );
 
       expect(restored.id).toBe('del-manual-id');
       expect(restored.deletedAt).toBeNull();
 
-      const stored = await repo.findById('del-manual-id');
+      const stored = await repo.findById('del-manual-id', defaultUserId);
       expect(stored?.deletedAt).toBeNull();
     });
 
     it('Given an already active problem, When manually adding the same slug, Then it throws ValidationError', async () => {
       await repo.create({
         id: 'active-slug-id',
+        userId: defaultUserId,
         platform: 'LEETCODE',
         slug: 'valid-anagram',
         title: 'Valid Anagram',
@@ -408,7 +426,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       });
 
       await expect(
-        problemService.manualAdd({ urlOrSlug: 'valid-anagram' })
+        problemService.manualAdd({ urlOrSlug: 'valid-anagram' }, defaultUserId)
       ).rejects.toThrow(ValidationError);
     });
 
@@ -416,10 +434,13 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       // Simulate LeetCode source being offline
       fakeSource.shouldFail = true;
 
-      const added = await problemService.manualAdd({
-        urlOrSlug: 'trapping-rain-water',
-        difficulty: 'Hard',
-      });
+      const added = await problemService.manualAdd(
+        {
+          urlOrSlug: 'trapping-rain-water',
+          difficulty: 'Hard',
+        },
+        defaultUserId
+      );
 
       expect(added.slug).toBe('trapping-rain-water');
       expect(added.title).toBe('Trapping Rain Water');
@@ -431,7 +452,7 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       fakeSource.shouldFail = true;
 
       await expect(
-        problemService.manualAdd({ urlOrSlug: 'trapping-rain-water' })
+        problemService.manualAdd({ urlOrSlug: 'trapping-rain-water' }, defaultUserId)
       ).rejects.toThrow(/difficulty/i);
     });
 
@@ -637,10 +658,10 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
       const sourceWithFailingLookup = new LeetCodeProblemSource(fakeHttp);
       const testSyncService = new SyncService(repo, sourceWithFailingLookup, settingsRepo);
 
-      await expect(testSyncService.sync('testuser')).rejects.toThrow();
+      await expect(testSyncService.sync(defaultUserId)).rejects.toThrow();
 
       // Ensure zero partial problems written to database
-      const all = await repo.list();
+      const all = await repo.list({ userId: defaultUserId });
       expect(all).toHaveLength(0);
     });
   });
@@ -650,31 +671,42 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
   /* -------------------------------------------------------------------------- */
   describe('ProblemService Lifecycle, Notes & Reviews', () => {
     it('Given a problem in INBOX, When saving note with invalid complexity, Then gate rejects and problem stays INBOX', async () => {
-      const problem = await problemService.manualAdd({
-        urlOrSlug: 'two-sum',
-        title: 'Two Sum',
-        difficulty: 'Easy',
-      });
+      const problem = await problemService.manualAdd(
+        {
+          urlOrSlug: 'two-sum',
+          title: 'Two Sum',
+          difficulty: 'Easy',
+        },
+        defaultUserId
+      );
       expect(problem.status).toBe(PROBLEM_STATUSES.INBOX);
 
       // Attempt to save incomplete note
       await expect(
-        problemService.saveNote(problem.id, [
-          { id: 'app-1', title: 'Approach 1', body: 'Missing complexity labels' },
-        ])
+        problemService.saveNote(
+          problem.id,
+          [
+            { id: 'app-1', title: 'Approach 1', body: 'Missing complexity labels' },
+          ],
+          'UTC',
+          defaultUserId
+        )
       ).rejects.toThrow(ValidationError);
 
-      const check = await repo.findById(problem.id);
+      const check = await repo.findById(problem.id, defaultUserId);
       expect(check?.status).toBe(PROBLEM_STATUSES.INBOX);
       expect(check?.enrolledAt).toBeNull();
     });
 
     it('Given a problem in INBOX, When saving note passing gate, Then it atomically enrolls problem (INBOX -> ACTIVE) and creates 3 reviews', async () => {
-      const problem = await problemService.manualAdd({
-        urlOrSlug: 'two-sum',
-        title: 'Two Sum',
-        difficulty: 'Easy',
-      });
+      const problem = await problemService.manualAdd(
+        {
+          urlOrSlug: 'two-sum',
+          title: 'Two Sum',
+          difficulty: 'Easy',
+        },
+        defaultUserId
+      );
 
       const aggregate = await problemService.saveNote(
         problem.id,
@@ -685,7 +717,8 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
             body: 'Time Complexity: O(n)\nSpace Complexity: O(n)',
           },
         ],
-        'UTC'
+        'UTC',
+        defaultUserId
       );
 
       expect(aggregate.problem.status).toBe(PROBLEM_STATUSES.ACTIVE);
@@ -697,77 +730,98 @@ describe('Phase 4: ProblemSource, LeetCode Fetcher, SyncService & ProblemService
     });
 
     it('Given an ACTIVE problem, When editing notes, Then gate re-validates Approach 1 preventing removal of complexity', async () => {
-      const problem = await problemService.manualAdd({
-        urlOrSlug: 'two-sum',
-        title: 'Two Sum',
-        difficulty: 'Easy',
-      });
+      const problem = await problemService.manualAdd(
+        {
+          urlOrSlug: 'two-sum',
+          title: 'Two Sum',
+          difficulty: 'Easy',
+        },
+        defaultUserId
+      );
       await problemService.saveNote(
         problem.id,
         [{ id: 'app-1', title: 'Approach 1', body: 'Time Complexity: O(1)\nSpace Complexity: O(1)' }],
-        'UTC'
+        'UTC',
+        defaultUserId
       );
 
       // Valid edit of active problem
-      const updated = await problemService.saveNote(problem.id, [
-        { id: 'app-1', title: 'Approach 1', body: 'Time Complexity: O(N)\nSpace Complexity: O(log N)' },
-        { id: 'app-2', title: 'Approach 2', body: 'Secondary method' },
-      ]);
+      const updated = await problemService.saveNote(
+        problem.id,
+        [
+          { id: 'app-1', title: 'Approach 1', body: 'Time Complexity: O(N)\nSpace Complexity: O(log N)' },
+          { id: 'app-2', title: 'Approach 2', body: 'Secondary method' },
+        ],
+        'UTC',
+        defaultUserId
+      );
       expect(updated.note?.approaches).toHaveLength(2);
 
       // Attempt to remove complexity on active problem: must be rejected!
       await expect(
-        problemService.saveNote(problem.id, [
-          { id: 'app-1', title: 'Approach 1', body: 'Removed complexity here' },
-        ])
+        problemService.saveNote(
+          problem.id,
+          [
+            { id: 'app-1', title: 'Approach 1', body: 'Removed complexity here' },
+          ],
+          'UTC',
+          defaultUserId
+        )
       ).rejects.toThrow(ValidationError);
     });
 
     it('Given an ACTIVE problem, When completing reviews through Stage 3, Then status moves to FULLY_SOLVED', async () => {
-      const problem = await problemService.manualAdd({
-        urlOrSlug: 'two-sum',
-        title: 'Two Sum',
-        difficulty: 'Easy',
-      });
+      const problem = await problemService.manualAdd(
+        {
+          urlOrSlug: 'two-sum',
+          title: 'Two Sum',
+          difficulty: 'Easy',
+        },
+        defaultUserId
+      );
       await problemService.saveNote(
         problem.id,
         [{ id: 'app-1', title: 'Approach 1', body: 'Time Complexity: O(1)\nSpace Complexity: O(1)' }],
-        'UTC'
+        'UTC',
+        defaultUserId
       );
 
       // Complete stages 1, 2, 3
-      await problemService.completeReview(problem.id, 1);
-      await problemService.completeReview(problem.id, 2);
-      const stage3Res = await problemService.completeReview(problem.id, 3);
+      await problemService.completeReview(problem.id, 1, defaultUserId);
+      await problemService.completeReview(problem.id, 2, defaultUserId);
+      const stage3Res = await problemService.completeReview(problem.id, 3, defaultUserId);
 
       expect(stage3Res.problem.status).toBe(PROBLEM_STATUSES.FULLY_SOLVED);
 
       // Undo Stage 3: moves FULLY_SOLVED -> ACTIVE
-      const undoRes = await problemService.undoReview(problem.id, 3);
+      const undoRes = await problemService.undoReview(problem.id, 3, defaultUserId);
       expect(undoRes.problem.status).toBe(PROBLEM_STATUSES.ACTIVE);
       expect(undoRes.reviews[2].completedAt).toBeNull();
     });
 
     it('Given softDelete, restore, and permanentDelete, When invoked, Then states update correctly', async () => {
-      const problem = await problemService.manualAdd({
-        urlOrSlug: 'delete-test-slug',
-        title: 'Delete Test',
-        difficulty: 'Easy',
-      });
+      const problem = await problemService.manualAdd(
+        {
+          urlOrSlug: 'delete-test-slug',
+          title: 'Delete Test',
+          difficulty: 'Easy',
+        },
+        defaultUserId
+      );
 
       // Soft delete
-      await problemService.softDelete(problem.id);
-      let p = await repo.findById(problem.id);
+      await problemService.softDelete(problem.id, defaultUserId);
+      let p = await repo.findById(problem.id, defaultUserId);
       expect(p?.deletedAt).toBe('2026-10-16T10:00:00.000Z');
 
       // Restore
-      await problemService.restore(problem.id);
-      p = await repo.findById(problem.id);
+      await problemService.restore(problem.id, defaultUserId);
+      p = await repo.findById(problem.id, defaultUserId);
       expect(p?.deletedAt).toBeNull();
 
       // Permanent delete
-      await problemService.hardDelete(problem.id);
-      p = await repo.findById(problem.id);
+      await problemService.hardDelete(problem.id, defaultUserId);
+      p = await repo.findById(problem.id, defaultUserId);
       expect(p).toBeNull();
     });
   });

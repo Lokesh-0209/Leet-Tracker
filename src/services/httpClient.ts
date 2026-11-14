@@ -42,7 +42,7 @@ export class FetchHttpClient implements HttpClient {
         headers: {
           'Content-Type': 'application/json',
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          ...(options.headers || {}),
+          ...options.headers,
         },
         body: JSON.stringify(body),
         signal: controller.signal,
@@ -82,7 +82,7 @@ export class FetchHttpClient implements HttpClient {
         method: 'GET',
         headers: {
           Accept: 'application/json',
-          ...(options.headers || {}),
+          ...options.headers,
         },
         signal: controller.signal,
       });

@@ -8,7 +8,6 @@ import {
   PLATFORMS,
   DIFFICULTIES,
   PROBLEM_STATUSES,
-  REVIEW_STAGES,
   ERROR_CODES,
 } from './constants.js';
 
@@ -42,6 +41,7 @@ export const ReviewSchema = z.object({
 
 export const ProblemSchema = z.object({
   id: z.string().uuid(),
+  userId: z.string().optional().nullable(),
   platform: PlatformSchema,
   slug: z.string().min(1),
   title: z.string().min(1),
@@ -51,6 +51,37 @@ export const ProblemSchema = z.object({
   status: ProblemStatusSchema,
   enrolledAt: z.string().datetime().nullable(),
   deletedAt: z.string().datetime().nullable(),
+});
+
+export const UserSchema = z.object({
+  id: z.string().uuid(),
+  leetcodeUsername: z.string().min(1),
+  createdAt: z.string().datetime(),
+});
+
+export const RegisterInputSchema = z.object({
+  challengeId: z.string().uuid(),
+  code: z.string().regex(/^\d{6}$/, 'Verification code must be 6 digits'),
+  password: z.string().min(12, 'Password must be at least 12 characters long'),
+});
+
+export const LoginInputSchema = z.object({
+  username: z.string().trim().min(1, 'Username is required'),
+  password: z.string().min(1, 'Password is required'),
+});
+
+export const StartVerificationInputSchema = z.object({
+  username: z
+    .string()
+    .trim()
+    .min(1, 'Username is required')
+    .max(50, 'Username too long')
+    .regex(/^[a-zA-Z0-9_-]+$/, 'Username contains invalid characters'),
+});
+
+export const VerifyCodeInputSchema = z.object({
+  challengeId: z.string().uuid(),
+  code: z.string().regex(/^\d{6}$/, 'Verification code must be 6 digits'),
 });
 
 export const SolvedProblemSchema = z.object({

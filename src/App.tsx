@@ -3,7 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { AuthProvider, useAuth } from './frontend/context/AuthContext.js';
+import { SplashScreen } from './frontend/components/SplashScreen.js';
+import { AuthPage } from './frontend/components/auth/AuthPage.js';
 import { Navbar } from './frontend/components/Navbar.js';
 import { Tabs, type TabKey } from './frontend/components/Tabs.js';
 import { FilterBar } from './frontend/components/FilterBar.js';
@@ -23,7 +26,8 @@ import { apiClient } from './frontend/apiClient.js';
 import type { ProblemAggregate, ReviewStage } from './domain/index.js';
 import { Inbox, CheckCircle2, AlertCircle, Sparkles } from 'lucide-react';
 
-export default function App() {
+function Dashboard() {
+  const { user, logout } = useAuth();
   const [activeTab, setActiveTab] = useState<TabKey>('INBOX');
 
   // Modals state
@@ -34,7 +38,7 @@ export default function App() {
   // Delete modal state
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; isPermanent: boolean } | null>(null);
 
-  // Hooks
+  // Hooks (only mounted when authenticated)
   const todayReviews = useTodayReviews();
   const problemsHook = useProblems(activeTab);
   const settingsHook = useSettings();
@@ -99,9 +103,11 @@ export default function App() {
       <Navbar
         onOpenAdd={() => setIsAddOpen(true)}
         onOpenSettings={() => setIsSettingsOpen(true)}
-        onSync={() => syncHook.sync(settingsHook.username)}
+        onSync={() => syncHook.sync(settingsHook.username || user?.leetcodeUsername)}
         syncing={syncHook.syncing}
-        username={settingsHook.username}
+        username={settingsHook.username || user?.leetcodeUsername}
+        user={user}
+        onLogout={logout}
       />
 
       {/* Main Container */}
@@ -110,7 +116,7 @@ export default function App() {
         <SyncBanner
           result={syncHook.result}
           error={syncHook.error}
-          onRetry={() => syncHook.sync(settingsHook.username)}
+          onRetry={() => syncHook.sync(settingsHook.username || user?.leetcodeUsername)}
           onDismiss={() => {
             syncHook.clearResult();
             syncHook.clearError();
@@ -297,5 +303,36 @@ export default function App() {
         onSaved={refreshAll}
       />
     </div>
+  );
+}
+
+function AppContent() {
+  const { status } = useAuth();
+  const [minSplashElapsed, setMinSplashElapsed] = useState(false);
+
+  useEffect(() => {
+    // Show splash screen for at least 1.2s to prevent jarring flashes
+    const timer = setTimeout(() => {
+      setMinSplashElapsed(true);
+    }, 1200);
+    return () => clearTimeout(timer);
+  }, []);
+
+  if (status === 'loading' || !minSplashElapsed) {
+    return <SplashScreen />;
+  }
+
+  if (status === 'unauthenticated') {
+    return <AuthPage />;
+  }
+
+  return <Dashboard />;
+}
+
+export default function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }

@@ -1,17 +1,27 @@
 # Deploying Leet Tracker to Render
 
-This guide walks you through deploying Leet Tracker to [Render](https://render.com) using the included Blueprint (`render.yaml`), configured with a persistent 1 GB disk and HTTP Basic Auth password protection.
+This guide walks through deploying Leet Tracker to [Render](https://render.com) with the included Blueprint (`render.yaml`), a persistent 1 GB disk for SQLite storage, multi-user LeetCode authentication, and reverse proxy trust.
 
-> **Note on AI Studio / Cloud Run Publishing**:
-> Publishing or deploying from Google AI Studio runs the application in production mode (`NODE_ENV=production`). If `APP_PASSWORD` is not configured in the environment settings, the server automatically boots into **LOCKED MODE**: platform health checks (`GET /api/health`) will return 200 `{"ok":true}` so deployments succeed, but all user routes and API requests return HTTP 503 (`AUTH_NOT_CONFIGURED`) to strictly prevent unauthenticated access. Additionally, the container filesystem in Cloud Run is ephemeral and wiped on every rebuild or cold restart. **Render** (with its persistent disk mount and secret environment variable support) is the supported production host.
+---
+
+## Authentication Architecture Overview
+
+Leet Tracker features a secure multi-user authentication model:
+- **Profile Ownership Verification**: New users verify ownership of their public LeetCode profile by generating a temporary 6-digit challenge code and pasting it into their LeetCode profile's "About Me" bio.
+- **Server-Side Keyed Hashes**: 6-digit verification codes are hashed using **HMAC-SHA256** keyed with a high-entropy server secret (`VERIFICATION_SECRET`). This protects against precomputation and rainbow-table attacks against the small 6-digit keyspace in case of database leakage.
+- **Password Security**: Passwords (minimum 12 characters) are salted and hashed using Node.js native `crypto.scrypt` (N=16384, r=8, p=1).
+- **Session Tokens & Cookies**: Session tokens are generated with 32 bytes of cryptographic randomness, hashed with SHA-256 in the database, and stored exclusively in **HttpOnly, SameSite=Lax** cookies (`leet_session`) with `Secure` enabled in production (`NODE_ENV=production`) and a 7-day lifetime (`Max-Age=604800`). `SameSite=Lax` allows safe top-level navigations while strictly blocking cross-site request forgery when combined with custom header CSRF protection. Tokens are never exposed in client-side JavaScript or API response bodies.
+- **Multi-User Isolation**: Every database record, review, note, and query is scoped strictly to the authenticated `user_id`.
+- **Anti-DoS Rate Limiting**: In-memory sliding-window rate limiters defend against IP and account brute-force without enabling username lockout DoS for legitimate users. Memory is strictly bounded, and active security records are never evicted under key churn.
+- **Reverse Proxy Trust**: The application uses Express `trust proxy` configuration to extract `req.ip` securely based on deployment topology.
 
 ---
 
 ## Prerequisites
 
 1. A **GitHub account** with this repository pushed to your personal or organization account.
-2. A **Render account** (free to sign up at https://render.com).
-3. A strong password for `APP_PASSWORD` (minimum **12 characters**; e.g., a randomly generated 20-character passphrase).
+2. A **Render account** (sign up at https://render.com).
+3. A persistent disk (included in Render's Starter plan) to preserve your SQLite database across restarts.
 
 ---
 
@@ -20,12 +30,10 @@ This guide walks you through deploying Leet Tracker to [Render](https://render.c
 ### 1. Connect GitHub Repository to Render
 1. Log in to your [Render Dashboard](https://dashboard.render.com).
 2. Click **New +** at the top right and select **Blueprint**.
-3. Connect your GitHub account if you haven't already.
-4. Select the `leet-tracker` repository from your list.
+3. Connect your GitHub account and select your `leet-tracker` repository.
 
 ### 2. Configure Service from the Blueprint
-1. Render will automatically detect `render.yaml` in the root of the repository.
-2. Review the detected service configuration:
+1. Render automatically detects `render.yaml` in the root of the repository:
    - **Service Name**: `leet-tracker`
    - **Environment**: `Node`
    - **Plan**: `Starter` (required for persistent disk support)
@@ -34,78 +42,62 @@ This guide walks you through deploying Leet Tracker to [Render](https://render.c
    - **Disk**: 1 GB mounted at `/var/data`
    - **Environment Variables**:
      - `NODE_ENV`: `production`
-     - `NODE_VERSION`: `22`
+     - `NODE_VERSION`: `22.22.2`
      - `DATABASE_PATH`: `/var/data/leet-tracker.db`
-     - `APP_USERNAME`: `leet` (default, or customize)
-     - `APP_PASSWORD`: Marked as a secret (`sync: false`)
-3. Under the secret `APP_PASSWORD` prompt, input your secure password (must be **at least 12 characters** long).
-4. Click **Apply**.
+     - `VERIFICATION_SECRET`: Automatically generated 32-character random string (`generateValue: true`)
+     - `TRUST_PROXY`: `1` (ensures `req.ip` trust for Render's single-hop reverse proxy)
+2. Click **Apply**.
 
-### 3. First Deployment
-1. Render will provision the starter instance, attach the persistent disk at `/var/data`, install dependencies, run the build, and launch `node dist/server.mjs`.
-2. Monitor the deployment logs. When the build completes and health checks pass (`/api/health`), the service status changes to **Live**.
-3. Note your service URL (e.g., `https://leet-tracker.onrender.com`).
+Keep `VERIFICATION_SECRET` stable after deployment. Changing it affects outstanding profile verification challenges. Configure it as a deployment secret and do not commit a real value to the repository.
 
-### 4. Logging In
-1. Visit your Render URL in your browser.
-2. Your browser will present an HTTP Basic Auth dialog:
-   - **Username**: `leet` (or whatever you set `APP_USERNAME` to)
-   - **Password**: Your `APP_PASSWORD`
-3. Enter your credentials. Once verified, the Leet Tracker dashboard loads.
+### Hosting limits
 
-### 5. Import Initial Backup & Test Sync
-1. Click the **Settings** gear icon in the top navigation bar.
-2. Under **Backup Export & Import**, click **Import Backup**.
-3. Choose your exported `leet-tracker-backup-YYYY-MM-DD.json` file.
-4. Confirm replacement in the dialog. All your problems, approach notes, and reviews will be restored into the database.
-5. In **Settings**, ensure your LeetCode username is configured.
-6. Return to the dashboard and click **Sync from LeetCode** to verify that recent accepted submissions fetch properly.
+Run one application instance with the included SQLite database. SQLite and the in-memory rate limiters are local to an instance, so adding replicas requires moving persistence and rate limiting to shared services first. Keep offsite backup exports in a separate secure location; the attached disk protects against routine restarts, not every storage or account failure.
+
+### 3. First Deployment & Health Check
+1. Render will provision the starter instance, attach the persistent disk at `/var/data`, install dependencies cleanly using `package-lock.json`, compile the frontend and backend bundles, and start `node dist/server.mjs`.
+2. The platform health check endpoint `GET /api/health` returns `200 {"ok":true}`. The server exits during startup if production is missing a `VERIFICATION_SECRET` of at least 16 characters.
+3. When the service status changes to **Live**, open your service URL (e.g. `https://leet-tracker.onrender.com`).
+
+### 4. Creating Your Account
+1. On your first visit, click **Create Account**.
+2. Enter your public LeetCode username.
+3. Copy the generated 6-digit verification code.
+4. Open your LeetCode profile settings and paste the code into your **About Me** section, then save your profile.
+5. In Leet Tracker, click **Verify Profile**.
+6. Set a strong password (minimum 12 characters) to complete registration and log in.
 
 ---
 
-## Maintenance & Best Practices
+## Environment Variables & Proxy Trust Reference
 
-### Regular Backups
-Although your SQLite database persists on the Render `/var/data` persistent disk, regular offsite backups are recommended:
-1. Open **Settings** in the navbar.
-2. Click **Export Backup**.
-3. Keep the downloaded JSON file in your personal records or cloud storage.
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `NODE_ENV` | Yes | `development` | Set to `production` in live deployments. |
+| `NODE_VERSION` | Yes | `22.22.2` | Node.js runtime version (>= 22.22.2). |
+| `PORT` | No | `3000` | Port for the HTTP server to listen on. |
+| `HOST` | No | `0.0.0.0` | Host interface to bind to. |
+| `DATABASE_PATH` | Yes | `./data/leet-tracker.db` | Absolute path to the SQLite database on persistent disk (`/var/data/leet-tracker.db`). |
+| `VERIFICATION_SECRET` | Yes in production | Development fallback | At least 16 characters. Secret key used for HMAC-SHA256 verification code hashing. |
+| `TRUST_PROXY` | No | `1` in prod | Reverse proxy hop count or configuration (see Proxy Trust section below). |
+| `AUTH_LOGIN_MAX_ATTEMPTS` | No | `5` | Max failed login attempts per account+IP before 15m delay. |
+| `AUTH_LOGIN_IP_MAX_ATTEMPTS` | No | `20` | Max login attempts per IP before 15m delay. |
+| `AUTH_VERIFY_MAX_ATTEMPTS` | No | `15` | Max verification code attempts per IP before 15m delay. |
+| `RATE_LIMIT_WINDOW_MS` | No | `900000` | Rate limiter window in ms (15 minutes). |
 
-### Rotating the Password
-1. Navigate to your service in the Render Dashboard.
-2. Open the **Environment** tab.
-3. Edit `APP_PASSWORD` with a new value (minimum 12 characters).
-4. Click **Save Changes**. Render will automatically restart your service with the new credentials.
-5. In your browser, clear cached HTTP credentials or open a private window to enter the new password.
+### Proxy Trust Architecture Assumptions
+Express `req.ip` relies on the `trust proxy` setting to identify the client's true IP from the `X-Forwarded-For` header:
+- **Render / Cloud Run / Single-Hop Reverse Proxies**: Set `TRUST_PROXY=1`. The application trusts the single reverse proxy immediately in front of it.
+- **Direct Internet Exposure**: When running a node server directly accessible from the public internet without an upstream reverse proxy, set `TRUST_PROXY=false` (the default in non-production). Setting `TRUST_PROXY=1` on a directly exposed server would allow clients to spoof `X-Forwarded-For` headers.
+- **Multi-Hop / CDN Deployments (e.g. Cloudflare -> Reverse Proxy -> Node)**: Set `TRUST_PROXY` to the exact hop count (e.g. `2`) or an array/CIDR string of trusted proxy IP ranges so untrusted client headers are ignored.
 
 ---
 
-## Troubleshooting
+## Maintenance & Backups
 
-### 1. Server Fails to Start: "APP_PASSWORD environment variable must be set in production mode"
-- **Cause**: In production (`NODE_ENV=production`), the application refuses to start if `APP_PASSWORD` is missing.
-- **Fix**: Go to the **Environment** tab on Render, ensure `APP_PASSWORD` is defined, and trigger a manual redeploy.
-
-### 2. Server Fails to Start: "APP_PASSWORD must be at least 12 characters long"
-- **Cause**: The password provided has fewer than 12 characters.
-- **Fix**: Update `APP_PASSWORD` in the Render Environment tab to at least 12 characters and redeploy.
-
-### 3. Continuous 401 Loop or Cannot Log In
-- **Cause**: Browser cached invalid Basic Auth credentials, or username/password mismatch.
-- **Fix**:
-  - Verify `APP_USERNAME` (default is `leet`) and `APP_PASSWORD` in your Render Environment settings.
-  - Open an Incognito/Private window to force the browser to prompt for credentials anew.
-  - Clear site data and cookies for the domain.
-
-### 4. Database Directory / Disk Not Mounted Error
-- **Cause**: `DATABASE_PATH` points to a path where the directory does not exist or lacks write permissions.
-- **Fix**:
-  - Verify that the disk is attached in Render under **Disks** (`mountPath: /var/data`).
-  - Verify `DATABASE_PATH=/var/data/leet-tracker.db`. The server automatically creates the directory if missing and verifies read/write access.
-
-### 5. Blank Page on Initial Load
-- **Cause**: The client build assets were not generated or the route is returning an unexpected response.
-- **Fix**:
-  - Check the deploy logs in Render to confirm that `vite build` and `esbuild` completed with exit code 0.
-  - Check browser DevTools console for network errors.
-  - Confirm that `/api/health` returns `{"ok": true}`.
+### Offsite Backups
+Although your SQLite database persists on the Render `/var/data` disk across deploys, periodic offsite backups are recommended:
+1. Log in and open **Settings** in the top navigation bar.
+2. Under **Backup Export & Import**, click **Export Backup**.
+3. Store the downloaded JSON backup file in a secure location.
+4. Backups can be restored at any time; all problems, approach notes, and review intervals are preserved.

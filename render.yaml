@@ -14,10 +14,10 @@ services:
       - key: NODE_ENV
         value: production
       - key: NODE_VERSION
-        value: "22"
+        value: "22.22.2"
       - key: DATABASE_PATH
         value: /var/data/leet-tracker.db
-      - key: APP_PASSWORD
-        sync: false
-      - key: APP_USERNAME
-        value: leet
+      - key: VERIFICATION_SECRET
+        generateValue: true
+      - key: TRUST_PROXY
+        value: "1"

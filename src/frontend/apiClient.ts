@@ -13,6 +13,7 @@ import {
   type ReviewStage,
   type Approach,
   type ErrorCode,
+  type User,
 } from '../domain/index.js';
 import type { SyncResult } from '../services/syncService.js';
 import type { ManualAddInput } from '../services/problemService.js';
@@ -20,7 +21,32 @@ import type { ManualAddInput } from '../services/problemService.js';
 export interface TodayReviewsResponse {
   readonly today: string;
   readonly count: number;
-  readonly items: readonly { readonly problem: Problem; readonly review: { readonly problemId: string; readonly stage: ReviewStage; readonly dueDate: string; readonly completedAt: string | null } }[];
+  readonly items: readonly {
+    readonly problem: Problem;
+    readonly review: {
+      readonly problemId: string;
+      readonly stage: ReviewStage;
+      readonly dueDate: string;
+      readonly completedAt: string | null;
+    };
+  }[];
+}
+
+export interface VerificationStartResponse {
+  readonly challengeId: string;
+  readonly code: string;
+  readonly expiresAt: string;
+  readonly username: string;
+}
+
+export interface VerificationVerifyResponse {
+  readonly verified: boolean;
+  readonly challengeId: string;
+  readonly username: string;
+}
+
+export interface AuthResponse {
+  readonly user: User;
 }
 
 export class ApiClient {
@@ -54,6 +80,7 @@ export class ApiClient {
     let response: Response;
     try {
       response = await fetch(url, {
+        credentials: 'same-origin',
         ...options,
         headers,
       });
@@ -74,7 +101,12 @@ export class ApiClient {
 
     if (!response.ok) {
       if (json && typeof json === 'object' && 'code' in json && 'message' in json) {
-        const errObj = json as { code: ErrorCode; message: string; retryable?: boolean; details?: unknown };
+        const errObj = json as {
+          code: ErrorCode;
+          message: string;
+          retryable?: boolean;
+          details?: unknown;
+        };
         throw new AppError({
           code: errObj.code,
           message: errObj.message,
@@ -92,6 +124,59 @@ export class ApiClient {
 
     return json as T;
   }
+
+  /* -------------------------------------------------------------------------- */
+  /* AUTH METHODS                                                               */
+  /* -------------------------------------------------------------------------- */
+
+  public async getMe(): Promise<{ user: User }> {
+    return this.request<{ user: User }>('/auth/me');
+  }
+
+  public async startVerification(username: string): Promise<VerificationStartResponse> {
+    return this.request<VerificationStartResponse>('/auth/verification/start', {
+      method: 'POST',
+      body: JSON.stringify({ username }),
+    });
+  }
+
+  public async verifyCode(
+    challengeId: string,
+    code: string
+  ): Promise<VerificationVerifyResponse> {
+    return this.request<VerificationVerifyResponse>('/auth/verification/verify', {
+      method: 'POST',
+      body: JSON.stringify({ challengeId, code }),
+    });
+  }
+
+  public async register(params: {
+    challengeId: string;
+    code: string;
+    password: string;
+  }): Promise<AuthResponse> {
+    return this.request<AuthResponse>('/auth/register', {
+      method: 'POST',
+      body: JSON.stringify(params),
+    });
+  }
+
+  public async login(username: string, password: string): Promise<AuthResponse> {
+    return this.request<AuthResponse>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ username, password }),
+    });
+  }
+
+  public async logout(): Promise<void> {
+    await this.request<{ ok: boolean }>('/auth/logout', {
+      method: 'POST',
+    });
+  }
+
+  /* -------------------------------------------------------------------------- */
+  /* PROBLEMS, REVIEWS, SETTINGS, BACKUP                                        */
+  /* -------------------------------------------------------------------------- */
 
   public async getProblems(filter?: {
     status?: ProblemStatus;
