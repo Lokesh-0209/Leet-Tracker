@@ -14,8 +14,6 @@ import {
   enrollProblem,
   completeReviewStage,
   undoReviewStage,
-  canCompleteStage,
-  canUndoStage,
   checkEnrollmentGate,
   validateEnrollmentComplexity,
   IllegalTransitionError,

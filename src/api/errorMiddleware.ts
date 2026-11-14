@@ -4,7 +4,7 @@
  */
 
 import type { Request, Response, NextFunction } from 'express';
-import { AppError, ERROR_CODES, isAppError, type ErrorContract } from '../domain/index.js';
+import { ERROR_CODES, isAppError, type ErrorContract } from '../domain/index.js';
 
 export const ERROR_CODE_TO_HTTP_STATUS: Record<string, number> = {
   [ERROR_CODES.VALIDATION_ERROR]: 400,

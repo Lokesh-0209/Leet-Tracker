@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "type": "module",
   "engines": {
-    "node": ">=22.13.0"
+    "node": ">=22.22.2"
   },
   "scripts": {
     "dev": "tsx server.ts",
@@ -12,7 +12,8 @@
     "start": "node dist/server.mjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint src",
     "test": "vitest run"
   },
   "dependencies": {
@@ -37,9 +38,18 @@
     "autoprefixer": "^10.4.21",
     "esbuild": "^0.28.0",
     "jsdom": "^30.1.3",
+    "oxlint": "^1.93.0",
     "tailwindcss": "^4.3.3",
     "tsx": "^4.21.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.5"
+  },
+  "optionalDependencies": {
+    "@rolldown/binding-linux-x64-gnu": "^1.2.14",
+    "@rolldown/binding-win32-x64-msvc": "^1.2.14",
+    "@tailwindcss/oxide-linux-x64-gnu": "^4.3.3",
+    "@tailwindcss/oxide-win32-x64-msvc": "^4.3.3",
+    "lightningcss-linux-x64-gnu": "^1.32.0",
+    "lightningcss-win32-x64-msvc": "^1.32.0"
   }
 }

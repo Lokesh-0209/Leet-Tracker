@@ -5,7 +5,7 @@
 
 import React from 'react';
 import { ExternalLink, Check, AlertTriangle, FileText, CheckCircle2 } from 'lucide-react';
-import type { ProblemAggregate, ReviewStage } from '../../domain/index.js';
+import type { ReviewStage } from '../../domain/index.js';
 import type { TodayReviewsResponse } from '../apiClient.js';
 
 interface ReviewQueueListProps {

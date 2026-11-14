@@ -30,6 +30,13 @@ export interface ManualAddInput {
   readonly difficulty?: Difficulty;
 }
 
+function assertValidUserId(userId?: string, operation = 'problem operation'): string {
+  if (!userId || typeof userId !== 'string' || !userId.trim()) {
+    throw new ValidationError(`User ID is required for ${operation}.`);
+  }
+  return userId.trim();
+}
+
 export class ProblemService {
   constructor(
     private readonly repository: ProblemRepository,
@@ -42,17 +49,18 @@ export class ProblemService {
    * - Restores a soft-deleted problem if the same slug is added.
    * - Works even when LeetCode is down by falling back to slug-derived title and required user difficulty.
    */
-  public async manualAdd(input: ManualAddInput): Promise<Problem> {
+  public async manualAdd(input: ManualAddInput, userId?: string): Promise<Problem> {
+    const validUserId = assertValidUserId(userId, 'manually adding problem');
     const { slug, canonicalUrl } = parseLeetCodeInput(input.urlOrSlug);
 
-    // Check if problem already exists in DB
-    const existing = await this.repository.findByPlatformAndSlug(PLATFORMS.LEETCODE, slug);
+    // Check if problem already exists in DB for this user
+    const existing = await this.repository.findByPlatformAndSlug(PLATFORMS.LEETCODE, slug, validUserId);
 
     if (existing) {
       if (existing.deletedAt !== null) {
         // "Adding a soft-deleted slug restores it"
-        await this.repository.restore(existing.id);
-        const restored = await this.repository.findById(existing.id);
+        await this.repository.restore(existing.id, validUserId);
+        const restored = await this.repository.findById(existing.id, validUserId);
         if (!restored) {
           throw new NotFoundError('Problem', existing.id);
         }
@@ -86,6 +94,7 @@ export class ProblemService {
 
     const newProblem: Problem = {
       id: randomUUID(),
+      userId: validUserId,
       platform: PLATFORMS.LEETCODE,
       slug,
       title,
@@ -100,17 +109,20 @@ export class ProblemService {
     return this.repository.create(newProblem);
   }
 
-  public async softDelete(problemId: string): Promise<void> {
+  public async softDelete(problemId: string, userId?: string): Promise<void> {
+    const validUserId = assertValidUserId(userId, 'soft-deleting problem');
     const deletedAt = this.clock.nowIso();
-    await this.repository.softDelete(problemId, deletedAt);
+    await this.repository.softDelete(problemId, deletedAt, validUserId);
   }
 
-  public async restore(problemId: string): Promise<void> {
-    await this.repository.restore(problemId);
+  public async restore(problemId: string, userId?: string): Promise<void> {
+    const validUserId = assertValidUserId(userId, 'restoring problem');
+    await this.repository.restore(problemId, validUserId);
   }
 
-  public async hardDelete(problemId: string): Promise<void> {
-    await this.repository.hardDelete(problemId);
+  public async hardDelete(problemId: string, userId?: string): Promise<void> {
+    const validUserId = assertValidUserId(userId, 'permanently deleting problem');
+    await this.repository.hardDelete(problemId, validUserId);
   }
 
   /**
@@ -122,9 +134,11 @@ export class ProblemService {
   public async saveNote(
     problemId: string,
     approaches: readonly Approach[],
-    timeZone?: string
+    timeZone?: string,
+    userId?: string
   ): Promise<ProblemAggregate> {
-    const problem = await this.repository.findById(problemId);
+    const validUserId = assertValidUserId(userId, 'saving note');
+    const problem = await this.repository.findById(problemId, validUserId);
     if (!problem) {
       throw new NotFoundError('Problem', problemId);
     }
@@ -147,6 +161,7 @@ export class ProblemService {
 
       await this.repository.enrollProblemAtomic({
         problemId: problem.id,
+        userId: validUserId,
         status: enrollment.problem.status,
         enrolledAt: enrollment.problem.enrolledAt!,
         reviews: enrollment.reviews,
@@ -167,8 +182,8 @@ export class ProblemService {
       updatedAt: this.clock.nowIso(),
     };
 
-    await this.repository.saveNote(updatedNote);
-    const reviews = await this.repository.getReviews(problem.id);
+    await this.repository.saveNote(updatedNote, validUserId);
+    const reviews = await this.repository.getReviews(problem.id, validUserId);
 
     return {
       problem,
@@ -182,9 +197,11 @@ export class ProblemService {
    */
   public async completeReview(
     problemId: string,
-    stage: ReviewStage
+    stage: ReviewStage,
+    userId?: string
   ): Promise<ProblemAggregate> {
-    const aggregate = await this.repository.getAggregate(problemId);
+    const validUserId = assertValidUserId(userId, 'completing review');
+    const aggregate = await this.repository.getAggregate(problemId, validUserId);
     if (!aggregate) {
       throw new NotFoundError('Problem', problemId);
     }
@@ -203,13 +220,14 @@ export class ProblemService {
         await this.repository.update({
           ...problem,
           status: completionResult.nextStatus,
+          userId: validUserId,
         });
       }
 
-      await this.repository.updateReview(completionResult.completedReview);
+      await this.repository.updateReview(completionResult.completedReview, validUserId);
     });
 
-    const updatedProblem = await this.repository.findById(problemId);
+    const updatedProblem = await this.repository.findById(problemId, validUserId);
 
     return {
       problem: updatedProblem || problem,
@@ -223,9 +241,11 @@ export class ProblemService {
    */
   public async undoReview(
     problemId: string,
-    stage: ReviewStage
+    stage: ReviewStage,
+    userId?: string
   ): Promise<ProblemAggregate> {
-    const aggregate = await this.repository.getAggregate(problemId);
+    const validUserId = assertValidUserId(userId, 'undoing review');
+    const aggregate = await this.repository.getAggregate(problemId, validUserId);
     if (!aggregate) {
       throw new NotFoundError('Problem', problemId);
     }
@@ -238,13 +258,14 @@ export class ProblemService {
         await this.repository.update({
           ...problem,
           status: undoResult.nextStatus,
+          userId: validUserId,
         });
       }
 
-      await this.repository.updateReview(undoResult.undoneReview);
+      await this.repository.updateReview(undoResult.undoneReview, validUserId);
     });
 
-    const updatedProblem = await this.repository.findById(problemId);
+    const updatedProblem = await this.repository.findById(problemId, validUserId);
 
     return {
       problem: updatedProblem || problem,

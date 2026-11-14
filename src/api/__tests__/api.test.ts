@@ -66,10 +66,15 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
   let fakeSource: FakeTestSource;
   let server: Server;
   let baseUrl: string;
+  const testUserId = '11111111-2222-3333-4444-555555555555';
 
   beforeEach(async () => {
     db = createSqliteDatabase(':memory:');
     runMigrations(db);
+    db.prepare(
+      'INSERT INTO users (id, leetcode_username, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(testUserId, 'valid_user', 'hash', 'salt', '2026-10-16T12:00:00Z');
+
     repo = new SqliteProblemRepository(db);
     settingsRepo = new SqliteSettingsRepository(db);
     clock = new FrozenClock('2026-10-16T12:00:00Z', 'UTC');
@@ -85,6 +90,11 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
       problemService,
       syncService,
       backupService,
+      defaultTestUser: {
+        id: testUserId,
+        leetcodeUsername: 'valid_user',
+        createdAt: '2026-10-16T12:00:00Z',
+      },
       clock,
     });
 
@@ -121,6 +131,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Happy path: lists problems matching filters and returns 200', async () => {
       await repo.create({
         id: '11111111-1111-1111-1111-111111111111',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'two-sum',
         title: 'Two Sum',
@@ -152,6 +163,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Happy path: GET /api/problems/:id returns single aggregate', async () => {
       await repo.create({
         id: '22222222-2222-2222-2222-222222222222',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'valid-parentheses',
         title: 'Valid Parentheses',
@@ -253,6 +265,10 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
   /* 3. POST /api/problems/sync & ERROR MAPPINGS                                */
   /* -------------------------------------------------------------------------- */
   describe('POST /api/problems/sync and Central Error Mappings', () => {
+    beforeEach(async () => {
+      await settingsRepo.setLeetCodeUsername('valid_user', testUserId);
+    });
+
     it('Happy path: sync returns 200 with added/known counts', async () => {
       fakeSource.solved = [
         {
@@ -282,7 +298,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
       const res = await fetch(`${baseUrl}/problems/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'missing_user' }),
+        body: JSON.stringify({ username: 'valid_user' }),
       });
 
       expect(res.status).toBe(422);
@@ -297,7 +313,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
       const res = await fetch(`${baseUrl}/problems/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'empty_user' }),
+        body: JSON.stringify({ username: 'valid_user' }),
       });
 
       expect(res.status).toBe(422);
@@ -315,7 +331,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
       const res = await fetch(`${baseUrl}/problems/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'spammer' }),
+        body: JSON.stringify({ username: 'valid_user' }),
       });
 
       expect(res.status).toBe(429);
@@ -330,7 +346,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
       const res = await fetch(`${baseUrl}/problems/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'some_user' }),
+        body: JSON.stringify({ username: 'valid_user' }),
       });
 
       expect(res.status).toBe(502);
@@ -345,13 +361,26 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
       const res = await fetch(`${baseUrl}/problems/sync`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'some_user' }),
+        body: JSON.stringify({ username: 'valid_user' }),
       });
 
       expect(res.status).toBe(502);
       const json = await res.json();
       expect(json.code).toBe('UPSTREAM_SCHEMA_CHANGED');
       expect(json.retryable).toBe(false);
+    });
+
+    it('Security: attempting to sync unverified or mismatched username is rejected with 400 VALIDATION_ERROR', async () => {
+      const res = await fetch(`${baseUrl}/problems/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'attacker_user' }),
+      });
+
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe('VALIDATION_ERROR');
+      expect(json.message).toContain('Cannot synchronize another LeetCode account');
     });
   });
 
@@ -395,6 +424,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Happy path: saving note that passes gate transitions INBOX -> ACTIVE and creates reviews', async () => {
       const problem = await repo.create({
         id: '33333333-3333-3333-3333-333333333333',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'invert-binary-tree',
         title: 'Invert Binary Tree',
@@ -432,6 +462,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Error path: saving note with missing complexity on INBOX problem returns 400 VALIDATION_ERROR', async () => {
       const problem = await repo.create({
         id: '44444444-4444-4444-4444-444444444444',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'invert-tree-2',
         title: 'Invert Tree 2',
@@ -470,6 +501,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Happy path: completing review stage 1 returns 200 and updated reviews', async () => {
       const problem = await repo.create({
         id: '55555555-5555-5555-5555-555555555555',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'climbing-stairs',
         title: 'Climbing Stairs',
@@ -484,7 +516,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
         { problemId: problem.id, stage: 1, dueDate: '2026-10-16', completedAt: null },
         { problemId: problem.id, stage: 2, dueDate: '2026-10-18', completedAt: null },
         { problemId: problem.id, stage: 3, dueDate: '2026-10-22', completedAt: null },
-      ]);
+      ], testUserId);
 
       const res = await fetch(`${baseUrl}/problems/${problem.id}/reviews/1/complete`, {
         method: 'POST',
@@ -497,6 +529,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Error path: out-of-order stage 2 returns 409 ILLEGAL_TRANSITION', async () => {
       const problem = await repo.create({
         id: '66666666-6666-6666-6666-666666666666',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'climbing-stairs-2',
         title: 'Climbing Stairs 2',
@@ -511,7 +544,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
         { problemId: problem.id, stage: 1, dueDate: '2026-10-16', completedAt: null },
         { problemId: problem.id, stage: 2, dueDate: '2026-10-18', completedAt: null },
         { problemId: problem.id, stage: 3, dueDate: '2026-10-22', completedAt: null },
-      ]);
+      ], testUserId);
 
       // Stage 2 before stage 1
       const res = await fetch(`${baseUrl}/problems/${problem.id}/reviews/2/complete`, {
@@ -525,6 +558,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Happy path & Error path: undo stage 1', async () => {
       const problem = await repo.create({
         id: '77777777-7777-7777-7777-777777777777',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'undo-test',
         title: 'Undo Test',
@@ -539,7 +573,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
         { problemId: problem.id, stage: 1, dueDate: '2026-10-16', completedAt: '2026-10-16T10:00:00Z' },
         { problemId: problem.id, stage: 2, dueDate: '2026-10-18', completedAt: null },
         { problemId: problem.id, stage: 3, dueDate: '2026-10-22', completedAt: null },
-      ]);
+      ], testUserId);
 
       // Happy path: undo stage 1
       const undoRes = await fetch(`${baseUrl}/problems/${problem.id}/reviews/1/undo`, {
@@ -564,6 +598,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
     it('Full lifecycle: DELETE soft-deletes, GET /problems/deleted lists it, POST restore restores it, DELETE /permanent purges it', async () => {
       const problem = await repo.create({
         id: '88888888-8888-8888-8888-888888888888',
+        userId: testUserId,
         platform: 'LEETCODE',
         slug: 'delete-lifecycle',
         title: 'Delete Lifecycle',
@@ -609,20 +644,32 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
   /* 8. SETTINGS ROUTES                                                         */
   /* -------------------------------------------------------------------------- */
   describe('Settings Routes', () => {
-    it('Happy path: GET and PUT /api/settings/username', async () => {
+    it('Happy path: GET and PUT /api/settings/username for current account', async () => {
       const get1 = await fetch(`${baseUrl}/settings/username`);
       expect(get1.status).toBe(200);
-      expect((await get1.json()).username).toBeNull();
+      expect((await get1.json()).username).toBe('valid_user');
 
       const putRes = await fetch(`${baseUrl}/settings/username`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ leetcodeUsername: 'code_ninja' }),
+        body: JSON.stringify({ leetcodeUsername: 'valid_user' }),
       });
       expect(putRes.status).toBe(200);
 
       const get2 = await fetch(`${baseUrl}/settings/username`);
-      expect((await get2.json()).username).toBe('code_ninja');
+      expect((await get2.json()).username).toBe('valid_user');
+    });
+
+    it('Security: attempting to change username to a different one requires re-verification and returns 400', async () => {
+      const res = await fetch(`${baseUrl}/settings/username`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ leetcodeUsername: 'different_user' }),
+      });
+      expect(res.status).toBe(400);
+      const json = await res.json();
+      expect(json.code).toBe('VALIDATION_ERROR');
+      expect(json.message).toContain('Changing a linked LeetCode account requires ownership verification.');
     });
 
     it('Error path: PUT /api/settings/username with invalid body returns 400', async () => {
@@ -642,7 +689,7 @@ describe('Phase 5: Express REST API & Error Middleware', () => {
   /* -------------------------------------------------------------------------- */
   describe('Backup Routes', () => {
     it('Happy path: GET /api/backup exports valid backup format', async () => {
-      await settingsRepo.setLeetCodeUsername('backup_user');
+      await settingsRepo.setLeetCodeUsername('backup_user', testUserId);
       const res = await fetch(`${baseUrl}/backup`);
       expect(res.status).toBe(200);
       const json = await res.json();

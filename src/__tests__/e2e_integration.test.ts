@@ -38,9 +38,15 @@ describe('Phase 7 Full End-to-End Integration Test', () => {
   let server: Server;
   let baseUrl: string;
 
+  const e2eUserId = '99999999-8888-7777-6666-555555555555';
+
   beforeEach(async () => {
     db = createSqliteDatabase(':memory:');
     runMigrations(db);
+    db.prepare(
+      'INSERT INTO users (id, leetcode_username, password_hash, password_salt, created_at) VALUES (?, ?, ?, ?, ?)'
+    ).run(e2eUserId, 'e2e_user', 'hash', 'salt', '2026-10-16T12:00:00Z');
+
     repo = new SqliteProblemRepository(db);
     settingsRepo = new SqliteSettingsRepository(db);
     clock = new FrozenClock('2026-10-16T12:00:00Z', 'UTC');
@@ -54,6 +60,11 @@ describe('Phase 7 Full End-to-End Integration Test', () => {
       settingsRepository: settingsRepo,
       problemService,
       syncService,
+      defaultTestUser: {
+        id: e2eUserId,
+        leetcodeUsername: 'e2e_user',
+        createdAt: '2026-10-16T12:00:00Z',
+      },
       clock,
     });
 

@@ -11,3 +11,5 @@ export * from './leetcode/leetcodeGql.js';
 export * from './leetcode/leetcodeProblemSource.js';
 export * from './leetcode/urlParser.js';
 export * from './backupService.js';
+export * from './authService.js';
+export * from './rateLimiter.js';

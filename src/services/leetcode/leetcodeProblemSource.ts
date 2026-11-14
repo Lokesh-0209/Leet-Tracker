@@ -90,7 +90,7 @@ export class LeetCodeProblemSource implements ProblemSource {
 
     // Concurrency limit: 3 concurrent requests
     const CONCURRENCY_LIMIT = 3;
-    const results: SolvedProblem[] = new Array(uniqueEntries.length);
+    const results: SolvedProblem[] = Array.from({ length: uniqueEntries.length });
     let nextIndex = 0;
 
     const workers = Array.from(
