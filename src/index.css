@@ -6,12 +6,12 @@
 @import "tailwindcss";
 
 :root {
-  --complexity-label-size: 32px;
+  --complexity-label-size: 20px;
 }
 
 @layer utilities {
   .complexity-label {
-    font-size: var(--complexity-label-size, 32px);
+    font-size: var(--complexity-label-size, 20px);
     font-weight: 700;
     line-height: 1.25;
   }

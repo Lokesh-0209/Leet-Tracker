@@ -140,6 +140,16 @@ export class ApiClient {
     });
   }
 
+  public async startPasswordReset(username: string): Promise<VerificationStartResponse> {
+    return this.request<VerificationStartResponse>('/auth/password-reset/start', {
+      method: 'POST', body: JSON.stringify({ username }),
+    });
+  }
+
+  public async completePasswordReset(params: { challengeId: string; code: string; password: string }): Promise<{ ok: boolean; username: string }> {
+    return this.request('/auth/password-reset/complete', { method: 'POST', body: JSON.stringify(params) });
+  }
+
   public async verifyCode(
     challengeId: string,
     code: string

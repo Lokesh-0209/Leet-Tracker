@@ -6,9 +6,10 @@
 import React, { useState } from 'react';
 import { LoginForm } from './LoginForm.js';
 import { RegisterForm } from './RegisterForm.js';
+import { PasswordResetForm } from './PasswordResetForm.js';
 
 export const AuthPage: React.FC = () => {
-  const [mode, setMode] = useState<'LOGIN' | 'REGISTER'>('LOGIN');
+  const [mode, setMode] = useState<'LOGIN' | 'REGISTER' | 'RESET'>('LOGIN');
 
   return (
     <div className="min-h-screen bg-zinc-950 flex flex-col justify-center items-center px-4 py-12">
@@ -33,7 +34,7 @@ export const AuthPage: React.FC = () => {
         {/* Auth Card */}
         <div className="bg-zinc-900/40 border border-zinc-800 rounded-2xl p-6 shadow-xl backdrop-blur-sm">
           {/* Mode Tabs */}
-          <div className="flex rounded-lg bg-zinc-950 p-1 mb-6 border border-zinc-800">
+          {mode !== 'RESET' && <div className="flex rounded-lg bg-zinc-950 p-1 mb-6 border border-zinc-800">
             <button
               type="button"
               onClick={() => setMode('LOGIN')}
@@ -56,14 +57,12 @@ export const AuthPage: React.FC = () => {
             >
               Register with LeetCode
             </button>
-          </div>
+          </div>}
 
           {/* Active View */}
-          {mode === 'LOGIN' ? (
-            <LoginForm onSwitchToRegister={() => setMode('REGISTER')} />
-          ) : (
-            <RegisterForm onSwitchToLogin={() => setMode('LOGIN')} />
-          )}
+          {mode === 'LOGIN' ? <LoginForm onSwitchToRegister={() => setMode('REGISTER')} onForgotPassword={() => setMode('RESET')} /> :
+            mode === 'REGISTER' ? <RegisterForm onSwitchToLogin={() => setMode('LOGIN')} /> :
+            <PasswordResetForm onBackToLogin={() => setMode('LOGIN')} />}
         </div>
 
         {/* Footer info */}
