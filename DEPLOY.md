@@ -1,103 +1,47 @@
-# Deploying Leet Tracker to Render
+# Deploying Leet Tracker on Netlify
 
-This guide walks through deploying Leet Tracker to [Render](https://render.com) with the included Blueprint (`render.yaml`), a persistent 1 GB disk for SQLite storage, multi-user LeetCode authentication, and reverse proxy trust.
+This project uses Netlify to host the React frontend and Express server, and Netlify Database for persistent PostgreSQL storage. Local development continues to use SQLite.
 
----
+## Cost controls
 
-## Authentication Architecture Overview
+- Choose Netlify's **Free** plan and leave auto-recharge disabled. Free has a hard monthly usage limit; the site can pause when its credits run out.
+- Netlify Server is currently in Early Access and sleeps after a few idle minutes, so the first request after inactivity may take longer.
+- Netlify Database compute and bandwidth use plan credits. Free accounts have per-database usage caps; when the account reaches its monthly hard limit, service pauses rather than charging extra.
+- Use the included `*.netlify.app` address. A custom domain requires owning a domain name.
 
-Leet Tracker features a secure multi-user authentication model:
-- **Profile Ownership Verification**: New users verify ownership of their public LeetCode profile by generating a temporary 6-digit challenge code and pasting it into their LeetCode profile's "About Me" bio.
-- **Server-Side Keyed Hashes**: 6-digit verification codes are hashed using **HMAC-SHA256** keyed with a high-entropy server secret (`VERIFICATION_SECRET`). This protects against precomputation and rainbow-table attacks against the small 6-digit keyspace in case of database leakage.
-- **Password Security**: Passwords (minimum 12 characters) are salted and hashed using Node.js native `crypto.scrypt` (N=16384, r=8, p=1).
-- **Session Tokens & Cookies**: Session tokens are generated with 32 bytes of cryptographic randomness, hashed with SHA-256 in the database, and stored exclusively in **HttpOnly, SameSite=Lax** cookies (`leet_session`) with `Secure` enabled in production (`NODE_ENV=production`) and a 7-day lifetime (`Max-Age=604800`). `SameSite=Lax` allows safe top-level navigations while strictly blocking cross-site request forgery when combined with custom header CSRF protection. Tokens are never exposed in client-side JavaScript or API response bodies.
-- **Multi-User Isolation**: Every database record, review, note, and query is scoped strictly to the authenticated `user_id`.
-- **Anti-DoS Rate Limiting**: In-memory sliding-window rate limiters defend against IP and account brute-force without enabling username lockout DoS for legitimate users. Memory is strictly bounded, and active security records are never evicted under key churn.
-- **Reverse Proxy Trust**: The application uses Express `trust proxy` configuration to extract `req.ip` securely based on deployment topology.
+Plan limits and prices can change; review Netlify's [Free plan details](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/credit-based-pricing-plans/) before publishing.
 
----
+## One-time setup
 
-## Prerequisites
+1. Push the reviewed `development` branch to GitHub, then import `Lokesh-0209/Leet-Tracker` in Netlify.
+2. In the Netlify project, create a database under **Data & Storage → Database**. Confirm the project remains on the Free plan.
+3. Set `VERIFICATION_SECRET` in the Netlify environment variables to a private random value of at least 16 characters. Do not commit this value.
+4. Set `NODE_ENV` to `production`. Netlify provides the managed database connection at runtime through `@netlify/database`.
+5. Deploy the `development` branch. Netlify uses Node.js 24 (required by Netlify Server), runs `npm run build`, publishes `dist`, and starts the Express app from `netlify/server/index.mjs`.
 
-1. A **GitHub account** with this repository pushed to your personal or organization account.
-2. A **Render account** (sign up at https://render.com).
-3. A persistent disk (included in Render's Starter plan) to preserve your SQLite database across restarts.
+The first server start creates the PostgreSQL schema using the versioned schema migration in `src/db/postgresSchema.ts`. API and website requests share the same domain, so the existing session-cookie and CSRF protections continue to apply.
 
----
+## Copy existing local SQLite data (optional)
 
-## Step-by-Step Deployment
+The local database is ignored by Git and is not uploaded with a deployment. To copy it into the Netlify Postgres database:
 
-### 1. Connect GitHub Repository to Render
-1. Log in to your [Render Dashboard](https://dashboard.render.com).
-2. Click **New +** at the top right and select **Blueprint**.
-3. Connect your GitHub account and select your `leet-tracker` repository.
+1. Create the Netlify Database and complete at least one deploy so it is provisioned.
+2. In a local PowerShell window, set `DATABASE_URL` to the database connection string from the Netlify database dashboard. Keep this value private.
+3. Stop the local app, and make sure `data/leet-tracker.db` is the copy you intend to migrate. The script makes a temporary working copy and leaves the original SQLite file untouched.
+4. Run `npm run migrate:sqlite-to-postgres -- --confirm`.
 
-### 2. Configure Service from the Blueprint
-1. Render automatically detects `render.yaml` in the root of the repository:
-   - **Service Name**: `leet-tracker`
-   - **Environment**: `Node`
-   - **Plan**: `Starter` (required for persistent disk support)
-   - **Build Command**: `npm ci --include=dev && npm run build`
-   - **Start Command**: `npm start`
-   - **Disk**: 1 GB mounted at `/var/data`
-   - **Environment Variables**:
-     - `NODE_ENV`: `production`
-     - `NODE_VERSION`: `22.22.2`
-     - `DATABASE_PATH`: `/var/data/leet-tracker.db`
-     - `VERIFICATION_SECRET`: Automatically generated 32-character random string (`generateValue: true`)
-     - `TRUST_PROXY`: `1` (ensures `req.ip` trust for Render's single-hop reverse proxy)
-2. Click **Apply**.
+The migration is additive: matching rows already in Postgres are kept. Review the reported per-table row counts and the app before relying on the deployed database. Do not run the import a second time to overwrite or roll back data; restore from a backup if needed.
 
-Keep `VERIFICATION_SECRET` stable after deployment. Changing it affects outstanding profile verification challenges. Configure it as a deployment secret and do not commit a real value to the repository.
+## Local checks
 
-### Hosting limits
+```sh
+npm ci
+npm run typecheck
+npm run build
+```
 
-Run one application instance with the included SQLite database. SQLite and the in-memory rate limiters are local to an instance, so adding replicas requires moving persistence and rate limiting to shared services first. Keep offsite backup exports in a separate secure location; the attached disk protects against routine restarts, not every storage or account failure.
+`npm start` runs the built Node server locally. Without `DATABASE_URL`, it uses the local SQLite database. With `DATABASE_URL`, it uses PostgreSQL and applies the Postgres schema migration at startup.
 
-### 3. First Deployment & Health Check
-1. Render will provision the starter instance, attach the persistent disk at `/var/data`, install dependencies cleanly using `package-lock.json`, compile the frontend and backend bundles, and start `node dist/server.mjs`.
-2. The platform health check endpoint `GET /api/health` returns `200 {"ok":true}`. The server exits during startup if production is missing a `VERIFICATION_SECRET` of at least 16 characters.
-3. When the service status changes to **Live**, open your service URL (e.g. `https://leet-tracker.onrender.com`).
+## Other included deployment file
 
-### 4. Creating Your Account
-1. On your first visit, click **Create Account**.
-2. Enter your public LeetCode username.
-3. Copy the generated 6-digit verification code.
-4. Open your LeetCode profile settings and paste the code into your **About Me** section, then save your profile.
-5. In Leet Tracker, click **Verify Profile**.
-6. Set a strong password (minimum 12 characters) to complete registration and log in.
-
----
-
-## Environment Variables & Proxy Trust Reference
-
-| Variable | Required | Default | Description |
-|---|---|---|---|
-| `NODE_ENV` | Yes | `development` | Set to `production` in live deployments. |
-| `NODE_VERSION` | Yes | `22.22.2` | Node.js runtime version (>= 22.22.2). |
-| `PORT` | No | `3000` | Port for the HTTP server to listen on. |
-| `HOST` | No | `0.0.0.0` | Host interface to bind to. |
-| `DATABASE_PATH` | Yes | `./data/leet-tracker.db` | Absolute path to the SQLite database on persistent disk (`/var/data/leet-tracker.db`). |
-| `VERIFICATION_SECRET` | Yes in production | Development fallback | At least 16 characters. Secret key used for HMAC-SHA256 verification code hashing. |
-| `TRUST_PROXY` | No | `1` in prod | Reverse proxy hop count or configuration (see Proxy Trust section below). |
-| `AUTH_LOGIN_MAX_ATTEMPTS` | No | `5` | Max failed login attempts per account+IP before 15m delay. |
-| `AUTH_LOGIN_IP_MAX_ATTEMPTS` | No | `20` | Max login attempts per IP before 15m delay. |
-| `AUTH_VERIFY_MAX_ATTEMPTS` | No | `15` | Max verification code attempts per IP before 15m delay. |
-| `RATE_LIMIT_WINDOW_MS` | No | `900000` | Rate limiter window in ms (15 minutes). |
-
-### Proxy Trust Architecture Assumptions
-Express `req.ip` relies on the `trust proxy` setting to identify the client's true IP from the `X-Forwarded-For` header:
-- **Render / Cloud Run / Single-Hop Reverse Proxies**: Set `TRUST_PROXY=1`. The application trusts the single reverse proxy immediately in front of it.
-- **Direct Internet Exposure**: When running a node server directly accessible from the public internet without an upstream reverse proxy, set `TRUST_PROXY=false` (the default in non-production). Setting `TRUST_PROXY=1` on a directly exposed server would allow clients to spoof `X-Forwarded-For` headers.
-- **Multi-Hop / CDN Deployments (e.g. Cloudflare -> Reverse Proxy -> Node)**: Set `TRUST_PROXY` to the exact hop count (e.g. `2`) or an array/CIDR string of trusted proxy IP ranges so untrusted client headers are ignored.
-
----
-
-## Maintenance & Backups
-
-### Offsite Backups
-Although your SQLite database persists on the Render `/var/data` disk across deploys, periodic offsite backups are recommended:
-1. Log in and open **Settings** in the top navigation bar.
-2. Under **Backup Export & Import**, click **Export Backup**.
-3. Store the downloaded JSON backup file in a secure location.
-4. Backups can be restored at any time; all problems, approach notes, and review intervals are preserved.
+`render.yaml` describes a paid Render Starter service with a persistent disk. It is not used by Netlify; do not deploy through that Blueprint if you want to stay on a no-cost plan.

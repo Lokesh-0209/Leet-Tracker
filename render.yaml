@@ -3,7 +3,6 @@ services:
     name: leet-tracker
     runtime: node
     plan: starter
-    branch: development
     buildCommand: npm ci --include=dev && npm run build
     startCommand: npm start
     healthCheckPath: /api/health

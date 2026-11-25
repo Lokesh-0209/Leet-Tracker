@@ -316,4 +316,36 @@ describe('AuthService and Multi-User Authentication', () => {
       expect(await authService.validateSession(sessionToken)).toBeNull();
     });
   });
+
+  describe('Password recovery', () => {
+    it('requires verified LeetCode ownership, changes the password, and revokes existing sessions', async () => {
+      const signup = await authService.startVerification('recoveryuser');
+      mockHttp.mockAboutMe = `Verification code: ${signup.code}`;
+      await authService.verifyCode(signup.challengeId, signup.code);
+      const { sessionToken } = await authService.register({
+        challengeId: signup.challengeId,
+        code: signup.code,
+        password: 'OriginalPassword123!',
+      });
+
+      const recovery = await authService.startPasswordReset('recoveryuser', '127.0.0.2');
+      const stored = await verificationRepo.findChallengeById(recovery.challengeId);
+      expect(stored?.purpose).toBe('password_reset');
+      mockHttp.mockAboutMe = `Recovery code: ${recovery.code}`;
+      await authService.verifyCode(recovery.challengeId, recovery.code, '127.0.0.2');
+      await authService.resetPassword({
+        challengeId: recovery.challengeId,
+        code: recovery.code,
+        password: 'ReplacementPassword123!',
+        clientIp: '127.0.0.2',
+      });
+
+      expect(await authService.validateSession(sessionToken)).toBeNull();
+      await expect(authService.login('recoveryuser', 'OriginalPassword123!')).rejects.toThrow(
+        'Invalid username or password.'
+      );
+      const renewed = await authService.login('recoveryuser', 'ReplacementPassword123!');
+      expect(renewed.user.leetcodeUsername).toBe('recoveryuser');
+    });
+  });
 });

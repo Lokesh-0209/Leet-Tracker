@@ -9,7 +9,7 @@ import type { UserRepository } from '../repositories/userRepository.js';
 import type { SessionRepository } from '../repositories/sessionRepository.js';
 import type { VerificationRepository } from '../repositories/verificationRepository.js';
 import type { SettingsRepository } from '../repositories/settingsRepository.js';
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import type { Clock } from '../domain/clock.js';
 import type { User } from '../domain/models.js';
 import { ValidationError } from '../domain/errors.js';
@@ -94,7 +94,7 @@ export interface AuthServiceDependencies {
   readonly settingsRepository: SettingsRepository;
   readonly httpClient: HttpClient;
   readonly clock: Clock;
-  readonly db?: SqliteDatabasePort;
+  readonly db?: DatabasePort;
   readonly rateLimiter?: RateLimiter;
 }
 
@@ -177,6 +177,119 @@ export class AuthService {
       expiresAt,
       username: profile.username,
     };
+  }
+
+  /** Starts recovery only after asking the owner to prove control of their public LeetCode profile. */
+  public async startPasswordReset(
+    username: string,
+    clientIp?: string
+  ): Promise<{ challengeId: string; code: string; expiresAt: string; username: string }> {
+    const cleanUsername = username.trim();
+    const config = this.getRateLimitConfig();
+    const ipKey = clientIp || '127.0.0.1';
+
+    this.rateLimiter.check(
+      `password_reset_ip:${ipKey}`,
+      10,
+      config.windowMs,
+      'Too many password reset requests from this IP. Please wait 15 minutes.'
+    );
+    this.rateLimiter.check(
+      `password_reset_user_ip:${cleanUsername.toLowerCase()}:${ipKey}`,
+      3,
+      config.windowMs,
+      'Too many password reset requests for this username from your IP. Please wait 15 minutes.'
+    );
+
+    const recentChallenges = await this.deps.verificationRepository.countRecentChallenges(
+      cleanUsername,
+      new Date(this.deps.clock.now().getTime() - config.windowMs).toISOString()
+    );
+    if (recentChallenges >= 5) {
+      throw new ValidationError('Too many verification requests for this username. Please wait 15 minutes.');
+    }
+
+    const profile = await fetchLeetCodeProfileGql(this.deps.httpClient, cleanUsername);
+    if (profile.username.trim().toLowerCase() !== cleanUsername.toLowerCase()) {
+      throw new ValidationError('LeetCode profile username mismatch.');
+    }
+
+    const code = generateVerificationCode();
+    const codeHash = hashVerificationCode(code);
+    const expiresAt = new Date(this.deps.clock.now().getTime() + 10 * 60 * 1000).toISOString();
+    const challengeId = crypto.randomUUID();
+    await this.deps.verificationRepository.createChallenge({
+      id: challengeId,
+      leetcodeUsername: profile.username,
+      codeHash,
+      expiresAt,
+      maxAttempts: 5,
+      purpose: 'password_reset',
+    });
+
+    // The response is intentionally generic with respect to account registration.
+    // The profile owner must complete verification before the app reveals whether a reset applies.
+    return { challengeId, code, expiresAt, username: profile.username };
+  }
+
+  public async resetPassword(params: {
+    challengeId: string;
+    code: string;
+    password: string;
+    clientIp?: string;
+  }): Promise<{ username: string }> {
+    const { challengeId, code, password, clientIp } = params;
+    if (!password || password.length < 12) {
+      throw new ValidationError('Password must be at least 12 characters long.');
+    }
+
+    const config = this.getRateLimitConfig();
+    const ipKey = clientIp || '127.0.0.1';
+    this.rateLimiter.check(
+      `password_reset_complete:${ipKey}`,
+      5,
+      config.windowMs,
+      'Too many password reset attempts from this IP. Please wait 15 minutes.'
+    );
+
+    const challenge = await this.deps.verificationRepository.findChallengeById(challengeId);
+    if (
+      !challenge ||
+      challenge.purpose !== 'password_reset' ||
+      challenge.consumedAt !== null ||
+      challenge.verifiedAt === null ||
+      new Date(challenge.expiresAt).getTime() <= this.deps.clock.now().getTime()
+    ) {
+      throw new ValidationError('This recovery request is invalid or expired. Start again.');
+    }
+    if (challenge.attempts >= challenge.maxAttempts) {
+      throw new ValidationError('Too many attempts. Start a new recovery request.');
+    }
+
+    const inputHash = hashVerificationCode(code.trim());
+    const expected = Buffer.from(challenge.codeHash, 'hex');
+    const received = Buffer.from(inputHash, 'hex');
+    if (expected.length !== received.length || !crypto.timingSafeEqual(expected, received)) {
+      await this.deps.verificationRepository.recordAttempt(challenge.id);
+      throw new ValidationError('Verification code is incorrect.');
+    }
+
+    const account = await this.deps.userRepository.findByUsername(challenge.leetcodeUsername);
+    if (!account) {
+      throw new ValidationError('No Leet Tracker account is registered for this LeetCode username.');
+    }
+
+    const { hash, salt } = await hashPassword(password);
+    const finishReset = async (): Promise<void> => {
+      await this.deps.verificationRepository.markConsumed(challenge.id, this.deps.clock.nowIso());
+      await this.deps.userRepository.updatePassword(account.id, hash, salt);
+      await this.deps.sessionRepository.deleteUserSessions(account.id);
+    };
+
+    if (this.deps.db) await this.deps.db.transaction(finishReset);
+    else await finishReset();
+
+    return { username: account.leetcodeUsername };
   }
 
   public async verifyCode(
@@ -285,6 +398,10 @@ export class AuthService {
     const challenge = await this.deps.verificationRepository.findChallengeById(challengeId);
     if (!challenge) {
       throw new ValidationError('Verification challenge not found.');
+    }
+
+    if (challenge.purpose !== 'registration') {
+      throw new ValidationError('This verification request cannot be used to create an account.');
     }
 
     if (new Date(challenge.expiresAt).getTime() <= this.deps.clock.now().getTime()) {

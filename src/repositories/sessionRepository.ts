@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import type { Session, User } from '../domain/models.js';
 
 export interface SessionRepository {
@@ -32,7 +32,7 @@ interface JoinedSessionRow {
 }
 
 export class SqliteSessionRepository implements SessionRepository {
-  constructor(private readonly db: SqliteDatabasePort) {}
+  constructor(private readonly db: DatabasePort) {}
 
   public async createSession(params: {
     tokenHash: string;
@@ -40,7 +40,7 @@ export class SqliteSessionRepository implements SessionRepository {
     expiresAt: string;
   }): Promise<Session> {
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO sessions (token_hash, user_id, expires_at, created_at)
          VALUES (?, ?, ?, ?)`
@@ -68,7 +68,7 @@ export class SqliteSessionRepository implements SessionRepository {
       WHERE s.token_hash = ?
     `;
 
-    const row = this.db.prepare<JoinedSessionRow>(query).get(tokenHash);
+    const row = await this.db.prepare<JoinedSessionRow>(query).get(tokenHash);
     if (!row) return null;
 
     const currentTimeMs = nowIso ? new Date(nowIso).getTime() : Date.now();
@@ -96,14 +96,14 @@ export class SqliteSessionRepository implements SessionRepository {
   }
 
   public async deleteSession(tokenHash: string): Promise<void> {
-    this.db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
+    await this.db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(tokenHash);
   }
 
   public async deleteExpiredSessions(nowIso: string): Promise<void> {
-    this.db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(nowIso);
+    await this.db.prepare('DELETE FROM sessions WHERE expires_at <= ?').run(nowIso);
   }
 
   public async deleteUserSessions(userId: string): Promise<void> {
-    this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
+    await this.db.prepare('DELETE FROM sessions WHERE user_id = ?').run(userId);
   }
 }

@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS verification_challenges (
   expires_at TEXT NOT NULL,
   verified_at TEXT,
   consumed_at TEXT,
+  purpose TEXT NOT NULL DEFAULT 'registration' CHECK (purpose IN ('registration', 'password_reset')),
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
@@ -197,5 +198,9 @@ export function runMigrations(db: SqliteDatabasePort): void {
 
   // Ensure all base tables and indexes exist
   db.exec(INITIAL_SCHEMA_SQL);
+  const challengeColumns = db.prepare<TableInfoRow>('PRAGMA table_info(verification_challenges)').all();
+  if (!challengeColumns.some((column) => column.name === 'purpose')) {
+    db.exec("ALTER TABLE verification_challenges ADD COLUMN purpose TEXT NOT NULL DEFAULT 'registration'");
+  }
   db.exec('PRAGMA foreign_keys = ON;');
 }

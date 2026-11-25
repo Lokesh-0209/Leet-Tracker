@@ -26,7 +26,7 @@ export interface SqliteRunResult {
 export interface SqliteStatementPort<T = Record<string, unknown>> {
   run(...params: unknown[]): SqliteRunResult;
   get(...params: unknown[]): T | undefined;
-  all(...params: unknown[]): T[];
+  all<R = T>(...params: unknown[]): R[];
 }
 
 export interface SqliteDatabasePort {
@@ -35,6 +35,22 @@ export interface SqliteDatabasePort {
   transaction<T>(fn: () => Promise<T>): Promise<T>;
   transaction<T>(fn: () => T | Promise<T>): Promise<T> | T;
   close(): void;
+  readonly isClosed: boolean;
+  readonly isMemory: boolean;
+  readonly path: string;
+}
+
+/** Shared persistence contract. SQLite implements it synchronously for local use;
+ * PostgreSQL implements it asynchronously for deployed instances. */
+export interface DatabasePort {
+  exec(sql: string): void | Promise<void>;
+  prepare<T = Record<string, unknown>>(sql: string): {
+    run(...params: unknown[]): SqliteRunResult | Promise<SqliteRunResult>;
+    get(...params: unknown[]): T | undefined | Promise<T | undefined>;
+    all<R = T>(...params: unknown[]): R[] | Promise<R[]>;
+  };
+  transaction<T>(fn: () => T | Promise<T>): Promise<T> | T;
+  close(): void | Promise<void>;
   readonly isClosed: boolean;
   readonly isMemory: boolean;
   readonly path: string;
@@ -118,13 +134,13 @@ class NodeSqliteAdapter implements SqliteDatabasePort {
         const row = stmt.get(...sanitized);
         return row ? (row as T) : undefined;
       },
-      all: (...params: unknown[]): T[] => {
+      all: <R = T>(...params: unknown[]): R[] => {
         if (this.isClosed) {
           throw new Error('Database is closed');
         }
         const sanitized = params.map(toSqlValue);
         const rows = stmt.all(...sanitized);
-        return rows as T[];
+        return rows as R[];
       },
     };
   }

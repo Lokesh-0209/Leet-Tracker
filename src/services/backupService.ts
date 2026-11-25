@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import type { ProblemRepository } from '../repositories/problemRepository.js';
 import type { SettingsRepository } from '../repositories/settingsRepository.js';
 import {
@@ -26,7 +26,7 @@ function assertValidUserId(userId?: string, operation = 'backup operation'): str
 
 export class BackupService {
   constructor(
-    private readonly db: SqliteDatabasePort,
+    private readonly db: DatabasePort,
     private readonly problemRepository: ProblemRepository,
     private readonly settingsRepository: SettingsRepository,
     private readonly clock: Clock
@@ -72,15 +72,15 @@ export class BackupService {
 
     const backup = parseResult.data as unknown as BackupData;
 
-    await this.db.transaction(() => {
+    await this.db.transaction(async () => {
       // 1. Wipe ONLY this user's data (reviews & notes cascade via foreign keys)
-      this.db.prepare('DELETE FROM problems WHERE user_id = ?').run(validUserId);
-      this.db.prepare('DELETE FROM settings WHERE user_id = ?').run(validUserId);
+      await this.db.prepare('DELETE FROM problems WHERE user_id = ?').run(validUserId);
+      await this.db.prepare('DELETE FROM settings WHERE user_id = ?').run(validUserId);
 
       // 2. Restore settings scoped strictly to this user
       if (backup.settings.username) {
         const now = this.clock.nowIso();
-        this.db
+        await this.db
           .prepare(
             `INSERT INTO settings (user_id, key, value, updated_at)
              VALUES (?, ?, ?, ?)
@@ -114,7 +114,7 @@ export class BackupService {
       // 4. Insert each problem, note, and review owned strictly by validUserId
       for (const item of backup.problems) {
         const p = item.problem;
-        insertProblemStmt.run(
+        await insertProblemStmt.run(
           p.id,
           validUserId,
           p.platform,
@@ -130,7 +130,7 @@ export class BackupService {
         );
 
         if (item.note) {
-          insertNoteStmt.run(
+          await insertNoteStmt.run(
             item.note.problemId,
             JSON.stringify(item.note.approaches),
             item.note.updatedAt
@@ -138,7 +138,7 @@ export class BackupService {
         }
 
         for (const r of item.reviews) {
-          insertReviewStmt.run(r.problemId, r.stage, r.dueDate, r.completedAt);
+          await insertReviewStmt.run(r.problemId, r.stage, r.dueDate, r.completedAt);
         }
       }
     });
