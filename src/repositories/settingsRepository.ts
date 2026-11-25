@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import { ValidationError } from '../domain/errors.js';
 
 export interface SettingsRepository {
@@ -21,11 +21,11 @@ function assertValidUserId(userId?: string, operation = 'settings operation'): s
 }
 
 export class SqliteSettingsRepository implements SettingsRepository {
-  constructor(private readonly db: SqliteDatabasePort) {}
+  constructor(private readonly db: DatabasePort) {}
 
   public async get(key: string, userId?: string): Promise<string | null> {
     const validUserId = assertValidUserId(userId, 'retrieving settings');
-    const row = this.db
+    const row = await this.db
       .prepare<{ value: string }>('SELECT value FROM settings WHERE user_id = ? AND key = ?')
       .get(validUserId, key);
     return row ? row.value : null;
@@ -34,7 +34,7 @@ export class SqliteSettingsRepository implements SettingsRepository {
   public async set(key: string, value: string, userId?: string): Promise<void> {
     const validUserId = assertValidUserId(userId, 'saving settings');
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO settings (user_id, key, value, updated_at)
          VALUES (?, ?, ?, ?)

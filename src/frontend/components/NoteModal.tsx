@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useRef, useId } from 'react';
+import React, { useState, useEffect, useId } from 'react';
 import {
   X,
   FileText,
@@ -17,7 +17,6 @@ import {
 } from 'lucide-react';
 import {
   APPROACH_DEFAULT_TEMPLATE,
-  TEMPLATE_LABELS,
   type ProblemAggregate,
   type Approach,
   AppError,
@@ -54,9 +53,10 @@ export const NoteModal: React.FC<NoteModalProps> = ({
   const [tabTitleInput, setTabTitleInput] = useState<string>('');
   const [saving, setSaving] = useState<boolean>(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const backdropRef = useRef<HTMLDivElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [fontStyle, setFontStyle] = useState<'sans' | 'serif' | 'code'>('sans');
+  const [fontSize, setFontSize] = useState<'compact' | 'comfortable' | 'large'>('comfortable');
+  const fontFamilies = { sans: 'Inter, ui-sans-serif, system-ui, sans-serif', serif: 'Georgia, Cambria, serif', code: 'ui-monospace, SFMono-Regular, Consolas, monospace' };
+  const fontSizes = { compact: '14px', comfortable: '16px', large: '18px' };
 
   // Initialize draft when modal opens or aggregate changes
   useEffect(() => {
@@ -121,14 +121,6 @@ export const NoteModal: React.FC<NoteModalProps> = ({
       title: 'Approach 1',
       body: APPROACH_DEFAULT_TEMPLATE,
     };
-
-  // Scroll sync between textarea and backdrop highlight layer
-  const handleScrollSync = () => {
-    if (textareaRef.current && backdropRef.current) {
-      backdropRef.current.scrollTop = textareaRef.current.scrollTop;
-      backdropRef.current.scrollLeft = textareaRef.current.scrollLeft;
-    }
-  };
 
   const handleBodyChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const newBody = e.target.value;
@@ -233,34 +225,6 @@ export const NoteModal: React.FC<NoteModalProps> = ({
     }
   };
 
-  // Highlight layer parser: highlights template labels in amber bold, typed text in zinc-200
-  const renderHighlightedBody = (content: string) => {
-    const lines = content.split('\n');
-    return lines.map((line, lineIdx) => {
-      // Check if line starts with any template label
-      const matchedLabel = TEMPLATE_LABELS.find((lbl) =>
-        line.toLowerCase().startsWith(lbl.toLowerCase())
-      );
-
-      if (matchedLabel) {
-        const labelPart = line.slice(0, matchedLabel.length);
-        const remainder = line.slice(matchedLabel.length);
-        return (
-          <div key={lineIdx} className="min-h-[20px]">
-            <span className="font-bold text-amber-400 select-none">{labelPart}</span>
-            <span className="text-zinc-200">{remainder}</span>
-          </div>
-        );
-      }
-
-      return (
-        <div key={lineIdx} className="min-h-[20px] text-zinc-200">
-          {line || '\u00A0'}
-        </div>
-      );
-    });
-  };
-
   // View Mode Renderer: React nodes with 32px complexity labels via token
   const renderViewMode = (content: string) => {
     const lines = content.split('\n');
@@ -283,11 +247,11 @@ export const NoteModal: React.FC<NoteModalProps> = ({
           <div key={`compl-${i}`} className="my-5 p-4 rounded-xl bg-zinc-950/70 border border-zinc-800">
             <span
               className="font-bold text-amber-400 block tracking-tight"
-              style={{ fontSize: 'var(--complexity-label-size, 32px)', lineHeight: 1.25 }}
+              style={{ fontSize: '20px', lineHeight: 1.3 }}
             >
               {labelText}
             </span>
-            <div className="mt-2 text-sm font-mono text-zinc-200 font-medium">
+            <div className="mt-2 text-zinc-200 font-medium" style={{ fontSize: '0.92em' }}>
               {afterColon || <span className="text-zinc-500 italic">Not specified</span>}
             </div>
           </div>
@@ -308,7 +272,7 @@ export const NoteModal: React.FC<NoteModalProps> = ({
             <span className="text-xs uppercase tracking-wider font-bold text-zinc-400 block mb-1">
               {matchedOtherLabel}
             </span>
-            <div className="text-sm text-zinc-200 font-sans leading-relaxed whitespace-pre-wrap">
+            <div className="text-zinc-200 leading-relaxed whitespace-pre-wrap">
               {afterColon || <span className="text-zinc-500 italic">None noted</span>}
             </div>
           </div>
@@ -320,7 +284,7 @@ export const NoteModal: React.FC<NoteModalProps> = ({
       // Regular line of text
       if (trimmed.length > 0) {
         nodes.push(
-          <p key={`line-${i}`} className="text-sm text-zinc-300 my-1.5 leading-relaxed font-sans whitespace-pre-wrap">
+          <p key={`line-${i}`} className="text-zinc-300 my-1.5 leading-relaxed whitespace-pre-wrap">
             {line}
           </p>
         );
@@ -515,46 +479,36 @@ export const NoteModal: React.FC<NoteModalProps> = ({
           })}
         </div>
 
-        {/* Editor / Viewer Container (about 60% of panel height) */}
+        {/* Reading controls and note editor */}
         <div
           role="tabpanel"
           id={`panel-${activeApproach.id}`}
           aria-labelledby={`tab-${activeApproach.id}`}
           className="flex-1 flex flex-col min-h-0 pt-3 relative"
         >
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-zinc-950/70 px-3 py-2">
+            <div className="flex items-center gap-1.5" aria-label="Note font">
+              {(['sans', 'serif', 'code'] as const).map((font) => <button key={font} type="button" aria-pressed={fontStyle === font} onClick={() => setFontStyle(font)} className={`rounded-lg px-3 py-1.5 text-xs capitalize transition ${fontStyle === font ? 'bg-amber-400/15 text-amber-300' : 'text-zinc-400 hover:bg-zinc-800 hover:text-zinc-100'}`}>{font === 'sans' ? 'Clean' : font === 'serif' ? 'Classic' : 'Code'}</button>)}
+            </div>
+            <div className="flex items-center gap-1.5" aria-label="Text size">
+              {(['compact', 'comfortable', 'large'] as const).map((size, i) => <button key={size} type="button" aria-label={`${size} text`} aria-pressed={fontSize === size} onClick={() => setFontSize(size)} className={`rounded-lg px-2.5 py-1.5 text-xs transition ${fontSize === size ? 'bg-zinc-800 text-white' : 'text-zinc-500 hover:text-white'}`}>{['A', 'A', 'A'][i]}{i === 2 ? '+' : ''}</button>)}
+            </div>
+          </div>
           {isEditing ? (
-            /* Editing Mode: Highlight Layer behind transparent textarea */
             <div className="relative flex-1 min-h-0 rounded-xl border border-zinc-800 bg-zinc-950 overflow-hidden focus-within:border-amber-500 transition">
-              {/* Backdrop Highlight Layer with matched metrics */}
-              <div
-                ref={backdropRef}
-                aria-hidden="true"
-                className="absolute inset-0 p-4 overflow-y-auto overflow-x-hidden font-mono text-[13px] leading-[20px] whitespace-pre-wrap break-words pointer-events-none select-none"
-                style={{
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                }}
-              >
-                {renderHighlightedBody(activeApproach.body)}
-              </div>
-
-              {/* Foreground Transparent Textarea with Identical Metrics */}
               <textarea
-                ref={textareaRef}
                 value={activeApproach.body}
                 onChange={handleBodyChange}
-                onScroll={handleScrollSync}
                 rows={16}
                 aria-label="Approach notes editor"
-                placeholder="Write your approach notes here..."
-                className="absolute inset-0 w-full h-full p-4 font-mono text-[13px] leading-[20px] bg-transparent text-transparent caret-amber-400 selection:bg-amber-500/30 selection:text-transparent border-0 rounded-xl resize-none focus:outline-none whitespace-pre-wrap break-words z-10"
-                style={{
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                }}
+                placeholder="Write your approach notes here…"
+                className="absolute inset-0 h-full w-full resize-none border-0 bg-transparent p-5 leading-7 text-zinc-100 placeholder:text-zinc-600 focus:outline-none"
+                style={{ fontFamily: fontFamilies[fontStyle], fontSize: fontSizes[fontSize] }}
               />
             </div>
           ) : (
             /* View Mode: React Nodes with 32px token for complexity labels */
-            <div className="flex-1 min-h-0 rounded-xl border border-zinc-800 bg-zinc-950 p-5 overflow-y-auto">
+            <div className="flex-1 min-h-0 rounded-xl border border-zinc-800 bg-zinc-950 p-6 overflow-y-auto" style={{ fontFamily: fontFamilies[fontStyle], fontSize: fontSizes[fontSize] }}>
               {renderViewMode(activeApproach.body)}
             </div>
           )}

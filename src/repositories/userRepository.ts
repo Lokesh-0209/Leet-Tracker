@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import type { User, UserRecord } from '../domain/models.js';
 
 export interface UserRepository {
@@ -15,6 +15,7 @@ export interface UserRepository {
   }): Promise<User>;
   findByUsername(username: string): Promise<UserRecord | null>;
   findById(id: string): Promise<User | null>;
+  updatePassword(userId: string, passwordHash: string, passwordSalt: string): Promise<void>;
   count(): Promise<number>;
   claimLegacyData(userId: string, username: string): Promise<{ problemsClaimed: number; settingsClaimed: number }>;
 }
@@ -28,7 +29,7 @@ interface UserDbRow {
 }
 
 export class SqliteUserRepository implements UserRepository {
-  constructor(private readonly db: SqliteDatabasePort) {}
+  constructor(private readonly db: DatabasePort) {}
 
   public async create(params: {
     id: string;
@@ -37,7 +38,7 @@ export class SqliteUserRepository implements UserRepository {
     passwordSalt: string;
   }): Promise<User> {
     const now = new Date().toISOString();
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO users (id, leetcode_username, password_hash, password_salt, created_at)
          VALUES (?, ?, ?, ?, ?)`
@@ -52,9 +53,9 @@ export class SqliteUserRepository implements UserRepository {
   }
 
   public async findByUsername(username: string): Promise<UserRecord | null> {
-    const row = this.db
+    const row = await this.db
       .prepare<UserDbRow>(
-        'SELECT * FROM users WHERE leetcode_username = ? COLLATE NOCASE'
+        'SELECT * FROM users WHERE lower(leetcode_username) = lower(?)'
       )
       .get(username.trim());
 
@@ -70,7 +71,7 @@ export class SqliteUserRepository implements UserRepository {
   }
 
   public async findById(id: string): Promise<User | null> {
-    const row = this.db
+    const row = await this.db
       .prepare<UserDbRow>('SELECT id, leetcode_username, created_at FROM users WHERE id = ?')
       .get(id);
 
@@ -83,8 +84,15 @@ export class SqliteUserRepository implements UserRepository {
     };
   }
 
+  public async updatePassword(userId: string, passwordHash: string, passwordSalt: string): Promise<void> {
+    const result = await this.db
+      .prepare('UPDATE users SET password_hash = ?, password_salt = ? WHERE id = ?')
+      .run(passwordHash, passwordSalt, userId);
+    if (result.changes === 0) throw new Error('Account no longer exists.');
+  }
+
   public async count(): Promise<number> {
-    const row = this.db.prepare<{ count: number }>('SELECT count(*) as count FROM users').get();
+    const row = await this.db.prepare<{ count: number }>('SELECT CAST(count(*) AS INTEGER) as count FROM users').get();
     return row ? row.count : 0;
   }
 
@@ -99,9 +107,9 @@ export class SqliteUserRepository implements UserRepository {
     userId: string,
     username: string
   ): Promise<{ problemsClaimed: number; settingsClaimed: number }> {
-    return await this.db.transaction(() => {
+    return await this.db.transaction(async () => {
       // Check legacy username
-      const legacySetting = this.db
+      const legacySetting = await this.db
         .prepare<{ value: string }>(
           "SELECT value FROM settings WHERE user_id = '__legacy__' AND key = 'leetcode_username'"
         )
@@ -117,22 +125,23 @@ export class SqliteUserRepository implements UserRepository {
       let settingsClaimed = 0;
 
       if (shouldClaim) {
-        const updateProblems = this.db
+        const updateProblems = await this.db
           .prepare('UPDATE problems SET user_id = ? WHERE user_id IS NULL')
           .run(userId);
         problemsClaimed = updateProblems.changes;
 
         // Copy legacy settings if not present
-        const copySettings = this.db
+        const copySettings = await this.db
           .prepare(
-            `INSERT OR IGNORE INTO settings (user_id, key, value, updated_at)
-             SELECT ?, key, value, updated_at FROM settings WHERE user_id = '__legacy__'`
+            `INSERT INTO settings (user_id, key, value, updated_at)
+             SELECT ?, key, value, updated_at FROM settings WHERE user_id = '__legacy__'
+             ON CONFLICT (user_id, key) DO NOTHING`
           )
           .run(userId);
         settingsClaimed = copySettings.changes;
 
         // Clean up legacy settings row
-        this.db.prepare("DELETE FROM settings WHERE user_id = '__legacy__'").run();
+        await this.db.prepare("DELETE FROM settings WHERE user_id = '__legacy__'").run();
       }
 
       return { problemsClaimed, settingsClaimed };

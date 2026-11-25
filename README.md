@@ -26,11 +26,11 @@ The application will be live at `http://localhost:3000`.
 
 ## Prerequisites & Node.js Engine
 - **Node.js**: `>=22.22.2` (the minimum supported version declared in `package.json`).
-- Leet Tracker utilizes Node 22's built-in `node:sqlite` (`DatabaseSync`), enabled by default starting in Node.js v22.13.0. Node outputs an `ExperimentalWarning: SQLite is an experimental feature` at startup, which is normal and expected. All SQLite adapter logic is cleanly isolated in `src/db/sqliteDatabase.ts` through the `SqliteDatabasePort` interface so it can be swapped for `better-sqlite3` or any other SQLite driver without altering repository or domain logic.
+- Leet Tracker uses Node's built-in `node:sqlite` (`DatabaseSync`) for local development. Deployed instances use PostgreSQL through the shared database port; database operations are asynchronous so both drivers work. Netlify Server currently requires Node.js 24 or later (set in `netlify.toml`).
 
 ## Persistence & Database Location
-- **Database Path**: Configured via the `DATABASE_PATH` environment variable. Defaults to `./data/leet-tracker.db`.
-- **Startup Resolution**: The server logs the absolute resolved database path on startup (`[Database] Initialized SQLite at resolved path: ...`) without leaking it in API responses.
+- **Local database**: SQLite at `DATABASE_PATH`, defaulting to `./data/leet-tracker.db`.
+- **Deployed database**: Netlify Database (PostgreSQL), initialized by the versioned migration in `src/db/postgresSchema.ts`.
 - **In-Memory Testing**: All unit, repository, service, and API integration tests run against `:memory:` for ephemeral, isolated execution.
 
 ## Your Data and Backups
@@ -47,8 +47,9 @@ To safeguard your study history across container resets or transfer data to a lo
 
 ## Scripts
 - `npm run dev`: Runs the full-stack application (Express + Vite development middlewares) on port 3000.
-- `npm run build`: Compiles the TypeScript and Vite frontend assets, then bundles `src/serverApp.ts` to `dist/server.mjs` via esbuild for production.
+- `npm run build`: Builds the Vite frontend in `dist` and bundles the Node server to `build/server.mjs`.
 - `npm run start`: Launches the server in production mode.
+- `npm run migrate:sqlite-to-postgres -- --confirm`: Copies the ignored local SQLite data to a configured Postgres database without deleting the source.
 - `npm test`: Runs the Vitest test suite across all domain, service, repository, API, and frontend tests.
 - `npm run lint`: Runs Oxlint on `src`.
 - `npm run typecheck`: Runs the TypeScript compiler without emitting files.
@@ -123,7 +124,7 @@ The central error middleware maps domain `AppError` subclasses to standard HTTP 
 ## Known Limitations
 1. **Recent Submissions Window**: The LeetCode public profile GraphQL query returns only the most recent window of ~20 accepted submissions (`recentAcSubmissionList`). Problems solved earlier that have scrolled out of this window cannot be retrieved via sync; they can be added manually via the URL/slug input.
 2. **Unofficial LeetCode API Endpoint**: LeetCode does not offer a documented public API. Synchronization relies on the public GraphQL endpoint (`https://leetcode.com/graphql`). Any upstream changes to query schemas or Cloudflare challenges are mitigated via timeout, error classification (`UPSTREAM_SCHEMA_CHANGED`, `RATE_LIMITED`, `NETWORK_ERROR`), and a manual Retry button on the UI banner.
-3. **SQLite Local Disk Persistence in Ephemeral Containers**: SQLite stores data locally on disk at `DATABASE_PATH`. In serverless ephemeral environments where instances scale to zero and disk state is wiped, backups can be exported and imported with one click via the Settings dialog.
+3. **Free-hosting limits**: Netlify Free has hard usage caps and may pause the app when they are reached. Its server also sleeps after idle time; expect a slower first request after it wakes.
 
 ## Specification Compliance Matrix
 

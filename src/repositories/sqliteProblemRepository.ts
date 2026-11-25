@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import type {
   ProblemRepository,
   ListProblemsFilter,
@@ -96,11 +96,11 @@ function mapRowToReview(row: ReviewRow): Review {
 }
 
 export class SqliteProblemRepository implements ProblemRepository {
-  constructor(private readonly db: SqliteDatabasePort) {}
+  constructor(private readonly db: DatabasePort) {}
 
   public async findById(id: string, userId?: string): Promise<Problem | null> {
     const validUserId = assertValidUserId(userId, 'findById');
-    const row = this.db
+    const row = await this.db
       .prepare<ProblemRow>('SELECT * FROM problems WHERE id = ? AND user_id = ?')
       .get(id, validUserId);
     return row ? mapRowToProblem(row) : null;
@@ -112,7 +112,7 @@ export class SqliteProblemRepository implements ProblemRepository {
     userId?: string
   ): Promise<Problem | null> {
     const validUserId = assertValidUserId(userId, 'findByPlatformAndSlug');
-    const row = this.db
+    const row = await this.db
       .prepare<ProblemRow>(
         'SELECT * FROM problems WHERE platform = ? AND slug = ? AND user_id = ?'
       )
@@ -160,14 +160,14 @@ export class SqliteProblemRepository implements ProblemRepository {
       }
     }
 
-    const rows = this.db.prepare<ProblemRow>(query).all(...params);
+    const rows = await this.db.prepare<ProblemRow>(query).all(...params);
     return rows.map(mapRowToProblem);
   }
 
   public async create(problem: Problem): Promise<Problem> {
     const validUserId = assertValidUserId(problem.userId, 'creating a problem');
 
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO problems (
           id, user_id, platform, slug, title, difficulty, url, solved_at, status, enrolled_at, deleted_at
@@ -193,7 +193,7 @@ export class SqliteProblemRepository implements ProblemRepository {
   public async update(problem: Problem): Promise<Problem> {
     const validUserId = assertValidUserId(problem.userId, 'updating a problem');
 
-    const result = this.db
+    const result = await this.db
       .prepare(
         `UPDATE problems SET
           title = ?,
@@ -227,7 +227,7 @@ export class SqliteProblemRepository implements ProblemRepository {
   public async softDelete(id: string, deletedAt: string, userId?: string): Promise<void> {
     const validUserId = assertValidUserId(userId, 'soft-deleting a problem');
 
-    const result = this.db
+    const result = await this.db
       .prepare('UPDATE problems SET deleted_at = ? WHERE id = ? AND user_id = ?')
       .run(deletedAt, id, validUserId);
 
@@ -239,7 +239,7 @@ export class SqliteProblemRepository implements ProblemRepository {
   public async restore(id: string, userId?: string): Promise<void> {
     const validUserId = assertValidUserId(userId, 'restoring a problem');
 
-    const result = this.db
+    const result = await this.db
       .prepare('UPDATE problems SET deleted_at = NULL WHERE id = ? AND user_id = ?')
       .run(id, validUserId);
 
@@ -251,7 +251,7 @@ export class SqliteProblemRepository implements ProblemRepository {
   public async hardDelete(id: string, userId?: string): Promise<void> {
     const validUserId = assertValidUserId(userId, 'permanently deleting a problem');
 
-    const result = this.db
+    const result = await this.db
       .prepare('DELETE FROM problems WHERE id = ? AND user_id = ?')
       .run(id, validUserId);
 
@@ -265,7 +265,7 @@ export class SqliteProblemRepository implements ProblemRepository {
     const problem = await this.findById(problemId, validUserId);
     if (!problem) return null;
 
-    const row = this.db
+    const row = await this.db
       .prepare<NoteRow>('SELECT * FROM notes WHERE problem_id = ?')
       .get(problemId);
     return row ? mapRowToNote(row) : null;
@@ -278,7 +278,7 @@ export class SqliteProblemRepository implements ProblemRepository {
       throw new NotFoundError('Problem', note.problemId);
     }
 
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO notes (problem_id, approaches_json, updated_at)
          VALUES (?, ?, ?)
@@ -294,7 +294,7 @@ export class SqliteProblemRepository implements ProblemRepository {
     const problem = await this.findById(problemId, validUserId);
     if (!problem) return [];
 
-    const rows = this.db
+    const rows = await this.db
       .prepare<ReviewRow>('SELECT * FROM reviews WHERE problem_id = ? ORDER BY stage ASC')
       .all(problemId);
     return rows.map(mapRowToReview);
@@ -309,7 +309,7 @@ export class SqliteProblemRepository implements ProblemRepository {
       throw new NotFoundError('Problem', reviews[0].problemId);
     }
 
-    await this.db.transaction(() => {
+    await this.db.transaction(async () => {
       const stmt = this.db.prepare(
         `INSERT INTO reviews (problem_id, stage, due_date, completed_at)
          VALUES (?, ?, ?, ?)
@@ -319,7 +319,7 @@ export class SqliteProblemRepository implements ProblemRepository {
       );
 
       for (const review of reviews) {
-        stmt.run(review.problemId, review.stage, review.dueDate, review.completedAt);
+        await stmt.run(review.problemId, review.stage, review.dueDate, review.completedAt);
       }
     });
   }
@@ -331,7 +331,7 @@ export class SqliteProblemRepository implements ProblemRepository {
       throw new NotFoundError('Problem', review.problemId);
     }
 
-    const result = this.db
+    const result = await this.db
       .prepare(
         `UPDATE reviews SET
            due_date = ?,
@@ -385,7 +385,7 @@ export class SqliteProblemRepository implements ProblemRepository {
       r_completed_at: string | null;
     }
 
-    const rows = this.db.prepare<JoinedRow>(query).all(validUserId, today);
+    const rows = await this.db.prepare<JoinedRow>(query).all(validUserId, today) as JoinedRow[];
 
     return rows.map((row) => ({
       problem: mapRowToProblem({
@@ -454,8 +454,8 @@ export class SqliteProblemRepository implements ProblemRepository {
   public async enrollProblemAtomic(params: EnrollProblemAtomicParams): Promise<void> {
     const validUserId = assertValidUserId(params.userId, 'enrolling a problem');
 
-    await this.db.transaction(() => {
-      const updateResult = this.db
+    await this.db.transaction(async () => {
+      const updateResult = await this.db
         .prepare(
           'UPDATE problems SET status = ?, enrolled_at = ? WHERE id = ? AND user_id = ? AND deleted_at IS NULL'
         )
@@ -471,11 +471,11 @@ export class SqliteProblemRepository implements ProblemRepository {
          VALUES (?, ?, ?, ?)`
       );
       for (const review of params.reviews) {
-        insertReviewStmt.run(review.problemId, review.stage, review.dueDate, review.completedAt);
+        await insertReviewStmt.run(review.problemId, review.stage, review.dueDate, review.completedAt);
       }
 
       // 3. Save note
-      this.db
+      await this.db
         .prepare(
           `INSERT INTO notes (problem_id, approaches_json, updated_at)
            VALUES (?, ?, ?)

@@ -8,8 +8,10 @@ import path from 'node:path';
 import fs from 'node:fs';
 import 'dotenv/config';
 import { createServer as createViteServer } from 'vite';
-import { createSqliteDatabase } from './db/sqliteDatabase.js';
+import { createApplicationDatabase } from './db/database.js';
 import { runMigrations } from './db/schema.js';
+import type { SqliteDatabasePort } from './db/sqliteDatabase.js';
+import { runPostgresMigrations } from './db/postgresSchema.js';
 import { SqliteProblemRepository } from './repositories/sqliteProblemRepository.js';
 import { SqliteSettingsRepository } from './repositories/settingsRepository.js';
 import { SqliteUserRepository } from './repositories/userRepository.js';
@@ -65,9 +67,14 @@ export async function createFullApp(options?: AppOptions): Promise<express.Appli
   rootApp.use(csrfMiddleware);
 
   // Single Composition Root: Wire persistence, services, and clock via dependency injection
-  const db = createSqliteDatabase();
-  console.log(`[Database] Initialized SQLite at resolved path: ${path.resolve(db.path)}`);
-  runMigrations(db);
+  const db = await createApplicationDatabase();
+  if (db.path === 'postgresql') {
+    console.log('[Database] Connected to PostgreSQL.');
+    await runPostgresMigrations(db);
+  } else {
+    console.log(`[Database] Initialized SQLite at resolved path: ${path.resolve(db.path)}`);
+    runMigrations(db as SqliteDatabasePort);
+  }
 
   const clock = new SystemClock();
   const problemRepository = new SqliteProblemRepository(db);
@@ -148,7 +155,7 @@ export async function startServer(): Promise<void> {
 }
 
 // Auto-start when executed as the active entry module (disabled when imported in test suites)
-if (!process.env.VITEST) {
+if (!process.env.VITEST && !process.env.NETLIFY_SERVER_ENTRY) {
   startServer().catch((err) => {
     console.error('Failed to start server:', err);
     process.exit(1);

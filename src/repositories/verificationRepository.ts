@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import type { SqliteDatabasePort } from '../db/sqliteDatabase.js';
+import type { DatabasePort } from '../db/sqliteDatabase.js';
 import type { VerificationChallenge } from '../domain/models.js';
 
 export interface VerificationRepository {
@@ -13,6 +13,7 @@ export interface VerificationRepository {
     codeHash: string;
     expiresAt: string;
     maxAttempts?: number;
+    purpose?: 'registration' | 'password_reset';
   }): Promise<VerificationChallenge>;
   findActiveChallengeByUsername(
     username: string,
@@ -35,6 +36,7 @@ interface ChallengeDbRow {
   verified_at: string | null;
   consumed_at: string | null;
   created_at: string;
+  purpose?: 'registration' | 'password_reset';
 }
 
 function mapRowToChallenge(row: ChallengeDbRow): VerificationChallenge {
@@ -44,6 +46,7 @@ function mapRowToChallenge(row: ChallengeDbRow): VerificationChallenge {
     codeHash: row.code_hash,
     attempts: row.attempts,
     maxAttempts: row.max_attempts,
+    purpose: row.purpose ?? 'registration',
     expiresAt: row.expires_at,
     verifiedAt: row.verified_at,
     consumedAt: row.consumed_at,
@@ -52,7 +55,7 @@ function mapRowToChallenge(row: ChallengeDbRow): VerificationChallenge {
 }
 
 export class SqliteVerificationRepository implements VerificationRepository {
-  constructor(private readonly db: SqliteDatabasePort) {}
+  constructor(private readonly db: DatabasePort) {}
 
   public async createChallenge(challenge: {
     id: string;
@@ -60,15 +63,16 @@ export class SqliteVerificationRepository implements VerificationRepository {
     codeHash: string;
     expiresAt: string;
     maxAttempts?: number;
+    purpose?: 'registration' | 'password_reset';
   }): Promise<VerificationChallenge> {
     const now = new Date().toISOString();
     const maxAttempts = challenge.maxAttempts ?? 5;
 
-    this.db
+    await this.db
       .prepare(
         `INSERT INTO verification_challenges (
-          id, leetcode_username, code_hash, attempts, max_attempts, expires_at, created_at
-        ) VALUES (?, ?, ?, 0, ?, ?, ?)`
+          id, leetcode_username, code_hash, attempts, max_attempts, expires_at, created_at, purpose
+        ) VALUES (?, ?, ?, 0, ?, ?, ?, ?)`
       )
       .run(
         challenge.id,
@@ -76,7 +80,8 @@ export class SqliteVerificationRepository implements VerificationRepository {
         challenge.codeHash,
         maxAttempts,
         challenge.expiresAt,
-        now
+        now,
+        challenge.purpose ?? 'registration'
       );
 
     return {
@@ -85,6 +90,7 @@ export class SqliteVerificationRepository implements VerificationRepository {
       codeHash: challenge.codeHash,
       attempts: 0,
       maxAttempts,
+      purpose: challenge.purpose ?? 'registration',
       expiresAt: challenge.expiresAt,
       verifiedAt: null,
       consumedAt: null,
@@ -96,10 +102,10 @@ export class SqliteVerificationRepository implements VerificationRepository {
     username: string,
     nowIso: string
   ): Promise<VerificationChallenge | null> {
-    const row = this.db
+    const row = await this.db
       .prepare<ChallengeDbRow>(
         `SELECT * FROM verification_challenges
-         WHERE leetcode_username = ? COLLATE NOCASE
+         WHERE lower(leetcode_username) = lower(?)
            AND expires_at > ?
            AND consumed_at IS NULL
          ORDER BY created_at DESC
@@ -111,7 +117,7 @@ export class SqliteVerificationRepository implements VerificationRepository {
   }
 
   public async findChallengeById(id: string): Promise<VerificationChallenge | null> {
-    const row = this.db
+    const row = await this.db
       .prepare<ChallengeDbRow>('SELECT * FROM verification_challenges WHERE id = ?')
       .get(id);
 
@@ -119,11 +125,11 @@ export class SqliteVerificationRepository implements VerificationRepository {
   }
 
   public async recordAttempt(id: string): Promise<number> {
-    this.db
+    await this.db
       .prepare('UPDATE verification_challenges SET attempts = attempts + 1 WHERE id = ?')
       .run(id);
 
-    const row = this.db
+    const row = await this.db
       .prepare<{ attempts: number }>('SELECT attempts FROM verification_challenges WHERE id = ?')
       .get(id);
 
@@ -131,22 +137,22 @@ export class SqliteVerificationRepository implements VerificationRepository {
   }
 
   public async markVerified(id: string, verifiedAt: string): Promise<void> {
-    this.db
+    await this.db
       .prepare('UPDATE verification_challenges SET verified_at = ? WHERE id = ?')
       .run(verifiedAt, id);
   }
 
   public async markConsumed(id: string, consumedAt: string): Promise<void> {
-    this.db
+    await this.db
       .prepare('UPDATE verification_challenges SET consumed_at = ? WHERE id = ?')
       .run(consumedAt, id);
   }
 
   public async countRecentChallenges(username: string, sinceIso: string): Promise<number> {
-    const row = this.db
+    const row = await this.db
       .prepare<{ count: number }>(
-        `SELECT count(*) as count FROM verification_challenges
-         WHERE leetcode_username = ? COLLATE NOCASE
+        `SELECT CAST(count(*) AS INTEGER) as count FROM verification_challenges
+         WHERE lower(leetcode_username) = lower(?)
            AND created_at >= ?`
       )
       .get(username.trim(), sinceIso);

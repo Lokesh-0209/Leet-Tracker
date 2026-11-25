@@ -15,6 +15,7 @@ import {
   StartVerificationInputSchema,
   VerifyCodeInputSchema,
   RegisterInputSchema,
+  PasswordResetInputSchema,
   LoginInputSchema,
   ValidationError,
   NotFoundError,
@@ -97,6 +98,23 @@ export function createApiRouter(deps: ApiDependencies): Router {
   /* AUTHENTICATION ROUTES (PUBLIC)                                             */
   /* -------------------------------------------------------------------------- */
   if (authService) {
+    router.post('/auth/password-reset/start', async (req, res, next) => {
+      try {
+        const body = StartVerificationInputSchema.safeParse(req.body);
+        if (!body.success) throw new ValidationError('Invalid recovery request', body.error.format());
+        res.json(await authService.startPasswordReset(body.data.username, getClientIp(req)));
+      } catch (err) { next(err); }
+    });
+
+    router.post('/auth/password-reset/complete', async (req, res, next) => {
+      try {
+        const body = PasswordResetInputSchema.safeParse(req.body);
+        if (!body.success) throw new ValidationError('Invalid password reset request', body.error.format());
+        const result = await authService.resetPassword({ ...body.data, clientIp: getClientIp(req) });
+        res.json({ ok: true, username: result.username });
+      } catch (err) { next(err); }
+    });
+
     // POST /api/auth/verification/start - Initiate LeetCode profile ownership challenge
     router.post('/auth/verification/start', async (req, res, next) => {
       try {

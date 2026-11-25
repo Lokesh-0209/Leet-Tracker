@@ -31,6 +31,7 @@ export interface VerificationChallenge {
   readonly codeHash: string;
   readonly attempts: number;
   readonly maxAttempts: number;
+  readonly purpose: 'registration' | 'password_reset';
   readonly expiresAt: string;
   readonly verifiedAt: string | null;
   readonly consumedAt: string | null;

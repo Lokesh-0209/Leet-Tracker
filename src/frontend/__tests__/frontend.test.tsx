@@ -308,7 +308,7 @@ describe('Phase 6 & 7 Frontend Components', () => {
       expect(textarea.value).toContain('Space Complexity:');
     });
 
-    it('Given existing note, When opened, Then defaults to View mode with 32px token styling on complexity labels', () => {
+    it('Given existing note, When opened, Then defaults to View mode with balanced complexity labels', () => {
       render(
         <NoteModal
           aggregate={activeAggregateWithNotes}
@@ -321,14 +321,14 @@ describe('Phase 6 & 7 Frontend Components', () => {
       // In View mode, Edit Notes button is visible
       expect(screen.getByText('Edit Notes')).toBeDefined();
 
-      // Complexity label rendered with --complexity-label-size
+      // Complexity labels use a compact size that fits the redesigned notes layout.
       const timeCompEl = screen.getByText('Time Complexity');
       expect(timeCompEl).toBeDefined();
-      expect(timeCompEl.style.fontSize).toContain('var(--complexity-label-size');
+      expect(timeCompEl.style.fontSize).toBe('20px');
 
       const spaceCompEl = screen.getByText('Space Complexity');
       expect(spaceCompEl).toBeDefined();
-      expect(spaceCompEl.style.fontSize).toContain('var(--complexity-label-size');
+      expect(spaceCompEl.style.fontSize).toBe('20px');
 
       // Value text O(1) rendered normally
       expect(screen.getByText('O(1)')).toBeDefined();
