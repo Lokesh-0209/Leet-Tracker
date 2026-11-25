@@ -6,10 +6,10 @@ A multi-user spaced-repetition web application for tracking, reviewing, and mast
 
 ```bash
 # 1. Clone repository
-git clone <repository-url>
-cd leet-tracker
+git clone https://github.com/Lokesh-0209/Leet-Tracker.git
+cd Leet-Tracker
 
-# 2. Configure environment
+# 2. Optional: configure local environment
 cp .env.example .env
 
 # 3. Install dependencies
@@ -33,11 +33,23 @@ The application will be live at `http://localhost:3000`.
 - **Deployed database**: Netlify Database (PostgreSQL), initialized by the versioned migration in `src/db/postgresSchema.ts`.
 - **In-Memory Testing**: All unit, repository, service, and API integration tests run against `:memory:` for ephemeral, isolated execution.
 
+## Deploy to Netlify (Free)
+
+The repository includes Netlify deployment configuration, but the app is **not deployed yet**. For an internet-accessible deployment:
+
+1. Keep the Netlify team on the **Free** plan and import this GitHub repository into Netlify. Deploy `development` as a preview, or merge it into `main` first if `main` is your production branch.
+2. In Netlify, create a database under **Data & Storage → Database**. The app uses PostgreSQL there; local development continues to use SQLite.
+3. Set `VERIFICATION_SECRET` to a private random value of at least 16 characters in Netlify's environment variables. Never commit the real secret.
+4. Deploy. `netlify.toml` selects Node.js 24, builds the frontend and server, and serves the app through Netlify Server. The first server start creates the PostgreSQL schema.
+5. Optionally copy the local SQLite database into the provisioned Postgres database using the migration instructions in [DEPLOY.md](DEPLOY.md).
+
+Netlify currently lists Free as **$0/month with a 300-credit hard limit**. The app can pause when the limit is reached; Netlify Database compute and bandwidth use credits. Stay on Free and do not buy credits or upgrade if you need to avoid platform charges. See [Netlify Free plan details](https://docs.netlify.com/manage/accounts-and-billing/billing/billing-for-credit-based-plans/credit-based-pricing-plans/) and [Netlify Database usage](https://docs.netlify.com/build/data-and-storage/netlify-database/). A free `*.netlify.app` address is available; a custom domain is optional.
+
 ## Your Data and Backups
 
-### Ephemeral Preview vs. Local Persistence
-- **Cloud Preview Container**: In this containerized preview environment (Google Cloud Run / AI Studio preview), the container disk is **ephemeral**. When the preview service is rebuilt, redeployed, or undergoes a scale-to-zero cold restart, a fresh container instance is spawned and any data written to `./data/leet-tracker.db` is reset to an initial empty state.
-- **Local Machine**: When running Leet Tracker locally on your own machine, files written to `./data/leet-tracker.db` persist permanently across restarts and reboots.
+### Local and deployed storage
+- **Local machine**: SQLite at `./data/leet-tracker.db` persists across restarts on that machine.
+- **Netlify deployment**: PostgreSQL is provided by Netlify Database. The app does not use a server's temporary disk for user data.
 
 ### Exporting and Restoring Backups
 To safeguard your study history across container resets or transfer data to a local instance:
@@ -59,6 +71,9 @@ To safeguard your study history across container resets or transfer data to a lo
 | Method | Path | Description |
 | :--- | :--- | :--- |
 | `GET` | `/api/health` | Health check endpoint returning `{ ok: true }`. |
+| `POST` | `/api/auth/password-reset/start` | Starts password recovery by issuing a LeetCode profile ownership challenge. |
+| `POST` | `/api/auth/verification/verify` | Checks the challenge code against the user's LeetCode About Me profile. |
+| `POST` | `/api/auth/password-reset/complete` | Changes the password after ownership verification and revokes existing sessions. |
 | `GET` | `/api/problems` | Lists problems with optional `status`, `difficulty`, and query `q` filters. |
 | `GET` | `/api/problems/deleted` | Lists soft-deleted problems for management and restoration in Settings. |
 | `GET` | `/api/problems/:id` | Returns a single problem aggregate (problem, notes with approaches, and review schedule). |
@@ -116,15 +131,15 @@ The central error middleware maps domain `AppError` subclasses to standard HTTP 
 - Panel header with "+ Add approach" button and problem metadata.
 - Approaches are presented as tabs (`Approach 1`, `Approach 2`, ...). Adding an approach transitions in-place with smooth 150-200ms motion (respecting `prefers-reduced-motion`).
 - Tabs are renameable and can be deleted (protected: last tab cannot be deleted).
-- **View Mode** (default when opening existing notes): renders React nodes with **ONLY** the words `"Time Complexity"` and `"Space Complexity"` rendered at 32px bold via `--complexity-label-size: 32px`. User-typed content remains normal font size.
-- **Edit Mode**: highlight layer behind a transparent textarea with identical font metrics and scroll sync highlights the 5 template labels (`Your approach:`, `Actual approach:`, `Mistakes:`, `Time Complexity:`, `Space Complexity:`) in amber bold while preserving plain-text storage.
+- **View Mode** (default when opening existing notes): presents notes in a readable layout, with compact complexity headings.
+- **Edit Mode**: uses a readable plain-text editor; choose clean, classic, or code type and compact, comfortable, or large text size.
 - **Enrollment Gate**: saving notes for an `INBOX` problem requires non-empty Time and Space complexity in Approach 1 to transition `INBOX -> ACTIVE`. Clear inline errors are presented on gate failure.
 - **Safety**: Unsaved changes indicator and discard confirmation prompt on closing.
 
 ## Known Limitations
 1. **Recent Submissions Window**: The LeetCode public profile GraphQL query returns only the most recent window of ~20 accepted submissions (`recentAcSubmissionList`). Problems solved earlier that have scrolled out of this window cannot be retrieved via sync; they can be added manually via the URL/slug input.
 2. **Unofficial LeetCode API Endpoint**: LeetCode does not offer a documented public API. Synchronization relies on the public GraphQL endpoint (`https://leetcode.com/graphql`). Any upstream changes to query schemas or Cloudflare challenges are mitigated via timeout, error classification (`UPSTREAM_SCHEMA_CHANGED`, `RATE_LIMITED`, `NETWORK_ERROR`), and a manual Retry button on the UI banner.
-3. **Free-hosting limits**: Netlify Free has hard usage caps and may pause the app when they are reached. Its server also sleeps after idle time; expect a slower first request after it wakes.
+3. **Free-hosting limits**: Netlify Free has a hard monthly credit cap. The site may pause until the next billing cycle if it reaches that cap; Database compute and bandwidth count toward usage.
 
 ## Specification Compliance Matrix
 
@@ -136,7 +151,7 @@ The central error middleware maps domain `AppError` subclasses to standard HTTP 
 | **Enrollment Gate** | Saving notes on `INBOX` requires non-empty Time & Space complexity in Approach 1 before activating and scheduling reviews. | `src/domain/schemas.ts`<br>`src/services/problemService.ts`<br>`src/frontend/components/NoteModal.tsx` | `src/domain/__tests__/domain.test.ts`<br>`src/services/__tests__/services.test.ts`<br>`src/frontend/__tests__/frontend.test.tsx` | **Met** |
 | **Soft Delete & Restore** | Problems can be soft-deleted (`deleted_at`). Sync never resurrects deleted problems. Restorable via Settings modal or re-adding URL. | `src/repositories/sqliteProblemRepository.ts`<br>`src/services/problemService.ts`<br>`src/frontend/components/SettingsModal.tsx` | `src/repositories/__tests__/sqliteProblemRepository.test.ts`<br>`src/services/__tests__/services.test.ts`<br>`src/__tests__/e2e_integration.test.ts` | **Met** |
 | **Sync & Typed Errors** | Specific errors (`VALIDATION_ERROR`, `NOT_FOUND`, `ILLEGAL_TRANSITION`, `INVALID_USERNAME`, `PRIVATE_OR_EMPTY_PROFILE`, `RATE_LIMITED`, `NETWORK_ERROR`, `UPSTREAM_SCHEMA_CHANGED`) mapped to exact HTTP status codes with `{ code, message, retryable }`. | `src/domain/errors.ts`<br>`src/api/errorMiddleware.ts`<br>`src/api/routes.ts` | `src/api/__tests__/api.test.ts` | **Met** |
-| **Notes Tabs & 32px Labels** | Approach tabs with add/rename/delete (last protected). View mode renders ONLY "Time Complexity" and "Space Complexity" words at 32px bold via `--complexity-label-size: 32px`. Edit mode highlights all 5 labels via synchronized highlight backdrop. | `src/frontend/components/NoteModal.tsx`<br>`src/index.css`<br>`src/domain/constants.ts` | `src/frontend/__tests__/frontend.test.tsx` | **Met** |
+| **Notes Tabs & Readable Editor** | Approach tabs with add/rename/delete (last protected), readable view, adjustable font family and text size, and a plain-text editor. | `src/frontend/components/NoteModal.tsx`<br>`src/index.css` | `src/frontend/__tests__/frontend.test.tsx` | **Met** |
 | **Inbox Solved Date Grouping** | Collapsible Inbox groups ordered newest first ("Solved today", "Yesterday", "MMM D, YYYY"). Pure domain grouping function with counts. | `src/domain/grouping.ts`<br>`src/frontend/components/InboxGroupedList.tsx` | `src/domain/__tests__/domain.test.ts`<br>`src/frontend/__tests__/frontend.test.tsx` | **Met** |
 | **Dashboard Tabs** | 4 filter tabs: Inbox, Today's Reviews, All Active, Fully Solved. Clean badge counts and responsive layout. | `src/App.tsx`<br>`src/frontend/components/Tabs.tsx`<br>`src/frontend/components/ProblemCard.tsx` | `src/frontend/__tests__/frontend.test.tsx` | **Met** |
 | **App Logo** | Custom vector SVG logo with 3 rising gradient bars, diagonal checkmark trajectory, and top-right green arrow. Displayed at 36px in Navbar and configured as favicon. | `public/logo.svg`<br>`src/frontend/components/Navbar.tsx`<br>`index.html`<br>`metadata.json` | `src/frontend/__tests__/frontend.test.tsx` (Navbar renders img with alt and src, public/logo.svg exists and non-empty, index.html contains icon link) | **Met** |
